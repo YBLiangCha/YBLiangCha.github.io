@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Loft&#39;s Blog</title>
+    <link>http://localhost:1313/</link>
+    <description>Recent content on Loft&#39;s Blog</description>
+    <image>
+      <title>Loft&#39;s Blog</title>
+      <url>https://i.postimg.cc/7hwBy7VS/calcr.png</url>
+      <link>https://i.postimg.cc/7hwBy7VS/calcr.png</link>
+    </image>
+    <generator>Hugo -- 0.148.2</generator>
+    <language>zh</language>
+    <copyright>©2024 SonnyCalcr&amp;rsquo;s Blog</copyright>
+    <lastBuildDate>Mon, 05 Aug 2024 01:12:53 +0800</lastBuildDate>
+    <atom:link href="http://localhost:1313/index.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>谈一谈我为什么重新建立了一个 Github Pages 个人网站</title>
+      <link>http://localhost:1313/posts/why-i-build-another-github-pages-website/</link>
+      <pubDate>Mon, 05 Aug 2024 01:12:53 +0800</pubDate>
+      <guid>http://localhost:1313/posts/why-i-build-another-github-pages-website/</guid>
+      <description>&lt;p&gt;追根溯源，也就是速度、易用性和便携性。&lt;/p&gt;
+&lt;p&gt;以前我是使用 Hexo 来建站的，而且，放到 Github 上面的是 hexo 最终渲染好的 html 文件之类，我现在发现这样特别笨重，尤其是在有多台 pc 的情况下，如果想要在不同的设备和操作系统之间进行写作，那么，这无疑是一件困难的事情。而且，每一次渲染造成的文件改动是很多的，这个在一定程度上是不利于版本管理的。而 Hugo 就很好地做到了这一点，利用 Github Actions 实现了文章与最终构建出来的产物进行分离，这样一来，我只需要把 markdown 文件托管到 Github 上面就可以了。对于 Hexo，我觉得应该也是可以做到这一点的，之所以没有去尝试，一方面懒了，另一方面，人总是想要尝试一点新鲜的东西，所以，这就转到了 Hugo。&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>关于</title>
+      <link>http://localhost:1313/about/</link>
+      <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
+      <guid>http://localhost:1313/about/</guid>
+      <description>about</description>
+    </item>
+  </channel>
+</rss>
