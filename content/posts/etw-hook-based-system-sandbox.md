@@ -234,11 +234,11 @@ union
 
 在[这篇文档中]([事件跟踪信息类 --- EVENT_TRACE_INFORMATION_CLASS](https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/ntetw/event_trace_information_class.htm))告诉我们，需要调用`NtSetThreadInformation`来设置Flags以及HookID。
 
-![image-20250914164758890](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\image-20250914164758890.png)
+![2f40cfac-8c9f-4517-a76b-b849df52fe12](https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/2f40cfac-8c9f-4517-a76b-b849df52fe12.png)
 
 我们跟进`NtSetThreadInformation -> EtwSetPerformanceTraceInformation`去找到具体的内容
 
-![image-20250914164907726](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\image-20250914164907726.png)
+![image-20250914164907726](https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/image-20250914164907726.png)
 
 对照上面的控制流条件以及相关配置文档，需要进行两步操作：
 
