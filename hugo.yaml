@@ -56,7 +56,7 @@ pagination:
 params:
   env: production # to enable google analytics, opengraph, twitter-cards and schema.
   description: "Theme PaperMod - https://github.com/adityatelange/hugo-PaperMod"
-  author: Sonny Calcr
+  author: Loft
   defaultTheme: dark # 默认是暗色背景
   ShowShareButtons: false # 关闭分享的按钮
   ShowReadingTime: true # 展示预估的阅读时长
