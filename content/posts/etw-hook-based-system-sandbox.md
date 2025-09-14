@@ -1,8 +1,10 @@
----
-title: "Etw Hook Based System Sandbox"
-date: 2025-09-12T14:08:09+08:00
-draft: true
----
++++
+title = '基于ETW Hook的自动化恶意代码分析沙箱设计'
+date = 2024-09-14T01:12:53+08:00
+categories = []
+tags = ["kernel","sandbox"]
+
++++
 
 ## 前言
 
