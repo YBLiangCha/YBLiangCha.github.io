@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="zh" dir="auto">
+
+<head><meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="robots" content="index, follow">
+<title>基于ETW Hook的自动化恶意代码分析沙箱设计 | Loft&#39;s Blog</title>
+<meta name="keywords" content="kernel, sandbox">
+<meta name="description" content="前言
+本文中的沙箱，均指一个受控、虚拟化的环境，专门用来自动运行、监控和分析可疑程序的行为。传统的沙箱根据监控、收集恶意软件行为的方式，可以分为两种模式：一种是基于API Hook的沙箱，如Cuckoo；一种是基于虚拟化技术(VT-x with EPT)的沙箱，如DrakVuf。">
+<meta name="author" content="Loft">
+<link rel="canonical" href="https://ybliangcha.github.io/posts/etw-hook-based-system-sandbox/">
+<link crossorigin="anonymous" href="/assets/css/stylesheet.36819bea596090d8b48cf10d9831382996197aa7e4fc86f792f7c08c9ca4d23b.css" integrity="sha256-NoGb6llgkNi0jPENmDE4KZYZeqfk/Ib3kvfAjJyk0js=" rel="preload stylesheet" as="style">
+<link rel="icon" href="https://ybliangcha.github.io/favicon.png">
+<link rel="icon" type="image/png" sizes="16x16" href="https://ybliangcha.github.io/favicon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="https://ybliangcha.github.io/favicon.png">
+<link rel="apple-touch-icon" href="https://ybliangcha.github.io/favicon.png">
+<link rel="mask-icon" href="https://ybliangcha.github.io/favicon.png">
+<meta name="theme-color" content="#2e2e33">
+<meta name="msapplication-TileColor" content="#2e2e33">
+<link rel="alternate" hreflang="zh" href="https://ybliangcha.github.io/posts/etw-hook-based-system-sandbox/">
+<noscript>
+    <style>
+        #theme-toggle,
+        .top-link {
+            display: none;
+        }
+
+    </style>
+</noscript><link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap" rel="stylesheet">
+<script type="text/javascript"
+        async
+        src="https://cdn.bootcss.com/mathjax/2.7.3/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+MathJax.Hub.Config({
+  tex2jax: {
+    inlineMath: [['$','$'], ['\\(','\\)']],
+    displayMath: [['$$','$$'], ['\[\[','\]\]']],
+    processEscapes: true,
+    processEnvironments: true,
+    skipTags: ['script', 'noscript', 'style', 'textarea', 'pre'],
+    TeX: { equationNumbers: { autoNumber: "AMS" },
+         extensions: ["AMSmath.js", "AMSsymbols.js"] }
+  }
+});
+
+MathJax.Hub.Queue(function() {
+    
+    
+    
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i = 0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});
+</script>
+
+<style>
+code.has-jax {
+    font: inherit;
+    font-size: 100%;
+    background: inherit;
+    border: inherit;
+    color: #515151;
+}
+</style>
+<meta property="og:url" content="https://ybliangcha.github.io/posts/etw-hook-based-system-sandbox/">
+  <meta property="og:site_name" content="Loft&#39;s Blog">
+  <meta property="og:title" content="基于ETW Hook的自动化恶意代码分析沙箱设计">
+  <meta property="og:description" content="前言 本文中的沙箱，均指一个受控、虚拟化的环境，专门用来自动运行、监控和分析可疑程序的行为。传统的沙箱根据监控、收集恶意软件行为的方式，可以分为两种模式：一种是基于API Hook的沙箱，如Cuckoo；一种是基于虚拟化技术(VT-x with EPT)的沙箱，如DrakVuf。">
+  <meta property="og:locale" content="zh">
+  <meta property="og:type" content="article">
+    <meta property="article:section" content="posts">
+    <meta property="article:published_time" content="2024-09-14T01:12:53+08:00">
+    <meta property="article:modified_time" content="2024-09-14T01:12:53+08:00">
+    <meta property="article:tag" content="Kernel">
+    <meta property="article:tag" content="Sandbox">
+      <meta property="og:image" content="https://i.postimg.cc/7hwBy7VS/calcr.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://i.postimg.cc/7hwBy7VS/calcr.png">
+<meta name="twitter:title" content="基于ETW Hook的自动化恶意代码分析沙箱设计">
+<meta name="twitter:description" content="前言
+本文中的沙箱，均指一个受控、虚拟化的环境，专门用来自动运行、监控和分析可疑程序的行为。传统的沙箱根据监控、收集恶意软件行为的方式，可以分为两种模式：一种是基于API Hook的沙箱，如Cuckoo；一种是基于虚拟化技术(VT-x with EPT)的沙箱，如DrakVuf。">
+
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position":  1 ,
+      "name": "Posts",
+      "item": "https://ybliangcha.github.io/posts/"
+    }, 
+    {
+      "@type": "ListItem",
+      "position":  2 ,
+      "name": "基于ETW Hook的自动化恶意代码分析沙箱设计",
+      "item": "https://ybliangcha.github.io/posts/etw-hook-based-system-sandbox/"
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "基于ETW Hook的自动化恶意代码分析沙箱设计",
+  "name": "基于ETW Hook的自动化恶意代码分析沙箱设计",
+  "description": "前言 本文中的沙箱，均指一个受控、虚拟化的环境，专门用来自动运行、监控和分析可疑程序的行为。传统的沙箱根据监控、收集恶意软件行为的方式，可以分为两种模式：一种是基于API Hook的沙箱，如Cuckoo；一种是基于虚拟化技术(VT-x with EPT)的沙箱，如DrakVuf。\n",
+  "keywords": [
+    "kernel", "sandbox"
+  ],
+  "articleBody": "前言 本文中的沙箱，均指一个受控、虚拟化的环境，专门用来自动运行、监控和分析可疑程序的行为。传统的沙箱根据监控、收集恶意软件行为的方式，可以分为两种模式：一种是基于API Hook的沙箱，如Cuckoo；一种是基于虚拟化技术(VT-x with EPT)的沙箱，如DrakVuf。\n其中，Cuckoo沙箱通过Inject.exe启动样本并挂起，向其中注入monitor.dll对一百多个Native API做了Inline Hook，收集恶意软件的API的调用信息，再解析这些调用信息，打上对应的行为标签。\n这样做的缺陷很显然：由于monitor.dll与恶意软件共存，再加上Inline Hook的痕迹过于明显，很容易被探测出监控环境的存在。并且，在Ring-3下的Hook能力是很有限的，像ntdll重载、syscall这些方法都能轻易规避Hook，使得沙箱跑不出任何行为。\n因此，本文在Cuckoo沙箱工作原理的基础上进行拓展，从内核Hook的角度出发，设计一个更隐蔽、强大的沙箱（或者说是监控系统），以来减少安全分析员们的工作量。\nETW Hook：核心原理 在64位Windows操作系统上，微软引入了Patch Guard对操作系统中易受攻击的结构、函数进行监控，常规的[SSDT Hook](内核模式 Rootkits，第一部分 | SSDT 钩子 • Adlice 软件 — KernelMode Rootkits, Part 1 | SSDT hooks • Adlice Software)将会引发蓝屏。因此ETW Hook被提出，其核心原理就是利用ETW在遥测syscall时的**“漏洞”**劫持控制流实现Native API Hook。这一漏洞的成因是PG对一些内核函数指针表监控不严（通常在.data段中），我们可以替换某些指针实现Hook而不触发PG，整个调用链如下：\n本文讲解的这个Hook点来自[Oxygen]([原创]InfinityHook 可兼容最新版windows-软件逆向-看雪论坛-安全社区|非营利性质技术交流社区)以及[Daax](《Fun with another PatchGuard-compliant Hook - Reverse Engineering》 — Fun with another PatchGuard-compliant Hook - Reverse Engineering)，向他们表示感谢！\n在Ring-3调用系统API后，最终会通过syscall指令进入内核（一般来说已经不用调用门了）。首先进入的就是内核中的KiSystemCall64函数；在这里，如果开启了 syscall Nt Kernel Logger，ETW-Ti就会记录这条系统调用信息，如下：\n在ETW记录系统调用前，会把真实的函数地址暂存在栈上，调用完毕后恢复。这也就给了我们可乘之机，只要在PerfInfoLogSysCallEntry的调用链中寻到一处函数指针替换点，就可以劫持控制流修改栈上暂存的函数地址，从而实现Hook。\n在PerfInfoLogSysCallEntry中同样保存了EventID和EVENT_DESCRIPTOR在栈上：\nF33:501802\n将之作为辅助定位栈上函数地址的Magic Number\n继续跟进到EtwpLogKernelEvent中，会发现一些有意思的函数：\n根据ETW Logger的配置情况，上面的三个函数可能会被执行；最开始的替换点是在EtwpReserveTraceBuffer中的GetCpuClock，但这个函数在高版本Windows已被修复，不适合替换了，因此我们跟进EtwpReserveWithPmcCounters\n这里暴露出一个函数指针的调用，这正是我们想要的，查阅HalPrivateDispatchTable的[结构](Vergilius Project | HAL_PRIVATE_DISPATCH)，替换掉Table + 0x248处的函数指针即可接管控制流，此时在栈上搜索两个Magic Number去定位到系统调用的函数地址并替换就实现了Hook，如下：\n1// 2//@brief 代理函数，劫持栈上的函数地址到自己的函数上，同时也是高频执行函数. 3// 4void ProxyEtwpReserveWithPmcCounters(PVOID Context, ULONGLONG TraceBuff) { 5\tUSHORT Magic = 0xF33;//Magic 1 6\tULONG Signate = 0x501802;//Magic 2 7\tULONG Magic2 = 0x601802; 8#define INFINITYHOOK_MAGIC_501802 ((unsigned long)0x501802) //Win11 23606 以前系统特征码 9#define INFINITYHOOK_MAGIC_601802 ((unsigned long)0x601802) //Win11 23606 及以后系统的特征码 10#define INFINITYHOOK_MAGIC_F33 ((unsigned short)0xF33) 11\tPULONG RspPos = _AddressOfReturnAddress(); 12\tPULONG RspLimit = __readgsqword(0x1a8); 13\t// KPCR-\u003ePcrb.CurrentThread Type:_KTHREAD* 14\tULONG64 currentThread = __readgsqword(0x188);// OFFSET_KPCR_CURRENT_THREAD 15\tULONG systemCallIndex = *(ULONG*)(currentThread + 0x80);// OFFSET_KTHREAD_SYSTEM_CALL_NUMBER 16 17 18\tdo { 19\tif (KeGetCurrentIrql() \u003c= DISPATCH_LEVEL) { 20\t// 不接管内核调用 21\tif (ExGetPreviousMode() == KernelMode) 22\treturn g_oriHalCollectPmcCounters(Context, TraceBuff); 23\twhile (RspPos \u003c= RspLimit) 24\t{ 25\tif (*((PUSHORT)(RspPos)) == INFINITYHOOK_MAGIC_F33) 26\t{ 27\t// Win11 24H2兼容 28\tif (RspPos[2] == INFINITYHOOK_MAGIC_501802 || RspPos[2] == INFINITYHOOK_MAGIC_601802) 29\t{ 30 31\tfor (; (ULONG64)RspPos \u003c= (ULONG64)RspLimit; ++RspPos) 32\t{ 33\t// 执行到这里则已经确认是SYSCALL的ETW记录，可以开始遍历栈 34 // 找在SSDT表范围内的地址，找到既是SYSCALL的地址 35 36 37\tULONG64* pllValue = (ULONG64*)RspPos; 38\tif ((*pllValue \u003e= PAGE_ALIGN(g_SystemCallTable) \u0026\u0026 39\t(*pllValue \u003c= PAGE_ALIGN(g_SystemCallTable + PAGE_SIZE * 2)))) 40\t{ 41 42\tHANDLE pid = PsGetCurrentProcessId(); 43 44\tif (LogManagerIsTargetProcess(pid)) { 45\t// 此时IRQL == DISPATCH_LEVEL 46\t// 只有目标进程才Hook，其他进程正常放行 47\tProcessSyscall(systemCallIndex, RspPos); 48\treturn g_oriHalCollectPmcCounters(Context, TraceBuff); 49\t} 50\telse { 51\treturn g_oriHalCollectPmcCounters(Context, TraceBuff); 52\t} 53 54 55\t} 56\t} 57\t} 58 59\t} 60\t++RspPos; 61 62\t} 63\t} 64\t} while (FALSE); 65 66\treturn g_oriHalCollectPmcCounters(Context, TraceBuff); 67} 但此时离ETW Hook还差了一步，由于正常来说控制流不会走到Hook点，所以需要参考一些文档手动配置ETW Logger走到我们替换的地方。\nETW Hook：合理的配置 离实现ETW Hook只剩一步，那就是配置ETW Logger使其正确执行到我们想要劫持的EtwpReserveWithPmcCounter，这分为两部分：\n配置ETW NT Kernel Logger以及系统调用事件开启 配置Event Trace类使得控制流走到EtwpReserveWithPmcCounter 第一步不困难，CKCL_TRACE_PROPERTIES是一个相对公开的结构体：\n1// 2//@brief ֹ开启Nt kernel logger etw 3// 4// 5NTSTATUS StartOrStopTrace(BOOLEAN control) { 6\tNTSTATUS status = STATUS_UNSUCCESSFUL; 7\tCKCL_TRACE_PROPERTIES* ckclProperty = 0; 8\tULONG lengthReturned = 0; 9\tdo { 10\t11\tckclProperty = ExAllocatePoolWithTag(NonPagedPool, PAGE_SIZE, POOL_TAG); 12\tif (!ckclProperty) { 13\tDbgPrintEx(77, 0, \"Failed to allocate memory for ckcl property.\\n\"); 14\tstatus = STATUS_INSUFFICIENT_RESOURCES; 15\tbreak; 16\t} 17\tmemset(ckclProperty, 0, PAGE_SIZE); 18\tUNICODE_STRING tmp = { 0 }; 19\tRtlInitUnicodeString(\u0026tmp, L\"Circular Kernel Context Logger\"); 20\tckclProperty-\u003eWnode.BufferSize = PAGE_SIZE; 21\tckclProperty-\u003eWnode.Flags = WNODE_FLAG_TRACED_GUID; 22\tckclProperty-\u003eProviderName = tmp; 23\tckclProperty-\u003eWnode.Guid = CkclSessionGuid; 24\tckclProperty-\u003eWnode.ClientContext = 1; 25\tckclProperty-\u003eBufferSize = sizeof(ULONG); 26\tckclProperty-\u003eMinimumBuffers = ckclProperty-\u003eMaximumBuffers = 2; 27\tckclProperty-\u003eLogFileMode = EVENT_TRACE_BUFFERING_MODE; 28 29\tstatus = ZwTraceControl(control ? EtwpStartTrace : EtwpStopTrace, ckclProperty, PAGE_SIZE, ckclProperty, PAGE_SIZE, \u0026lengthReturned); 30\t// STATUS_OBJECT_NAME_COLLISION 31\tif (!NT_SUCCESS(status) \u0026\u0026 status != STATUS_OBJECT_NAME_COLLISION) { 32\tDbgPrintEx(77, 0, \"Failed to enable kernel logger etw trace,status=%x\", status); 33\tbreak; 34\t} 35\tif (control) 36\t{ 37\tckclProperty-\u003eEnableFlags = EVENT_TRACE_FLAG_SYSTEMCALL; 38 39\tstatus = ZwTraceControl(EtwpUpdateTrace, ckclProperty, PAGE_SIZE, ckclProperty, PAGE_SIZE, \u0026lengthReturned); 40\tif (!NT_SUCCESS(status)) 41\t{ 42\tDbgPrintEx(77, 0, \"Failed to enable syscall etw, errcode=%x\", status); 43\tStartOrStopTrace(FALSE); 44\tbreak; 45\t} 46\t} 47\t} while (FALSE); 48\tif (ckclProperty) 49\tExFreePool(ckclProperty); 50\treturn status; 51} 对于第二步，由于没有公开的结构文档，所以需要自己配置相关的内容，从上面的代码中抠出条件：\n1Flags \u0026 0x800 \u0026\u0026 2LoggerContext-\u003ePmcData-\u003eHookIdCount != 0 \u0026\u0026 3PmcData-\u003eHookId[index] == HookID 这里的Flags是这样一个Union Struct：\n1union 2 { 3 ULONG Flags; //0x330 4 struct 5 { 6 ULONG Persistent:1; //0x330 7 ULONG AutoLogger:1; //0x330 8 ULONG FsReady:1; //0x330 9 ULONG RealTime:1; //0x330 10 ULONG Wow:1; //0x330 11 ULONG KernelTrace:1; //0x330 12 ULONG NoMoreEnable:1; //0x330 13 ULONG StackTracing:1; //0x330 14 ULONG ErrorLogged:1; //0x330 15 ULONG RealtimeLoggerContextFreed:1; //0x330 16 ULONG PebsTracing:1; //0x330 17 ULONG PmcCounters:1; // 我们关注的位 18 ULONG PageAlignBuffers:1; //0x330 19 ULONG StackLookasideListAllocated:1; //0x330 20 ULONG SecurityTrace:1; //0x330 21 ULONG LastBranchTracing:1; //0x330 22 ULONG SystemLoggerIndex:8; //0x330 23 ULONG StackCaching:1; //0x330 24 ULONG ProviderTracking:1; //0x330 25 ULONG ProcessorTrace:1; //0x330 26 ULONG QpcDeltaTracking:1; //0x330 27 ULONG MarkerBufferSaved:1; //0x330 28 ULONG LargeMdlPages:1; //0x330 29 ULONG ExcludeKernelStack:1; //0x330 30 ULONG BootLogger:1; //0x330 31 }; 32 }; 在[这篇文档中](事件跟踪信息类 — EVENT_TRACE_INFORMATION_CLASS)告诉我们，需要调用NtSetThreadInformation来设置Flags以及HookID。\n我们跟进NtSetThreadInformation -\u003e EtwSetPerformanceTraceInformation去找到具体的内容\n对照上面的控制流条件以及相关配置文档，需要进行两步操作：\n调用 ZwSetSystemInformation分配一个PMC Profile Source，将Flags.PmcCounters置位 调用ZwSetSystemInfomration设置HookId为0xF33 参考如下代码：\n1// 2//@brief 开启PMC计数器 PerformanceCounter 3// 4NTSTATUS OpenPmcCounter() { 5\tNTSTATUS status = STATUS_SUCCESS; 6\tPEVENT_TRACE_PROFILE_COUNTER_INFORMATION countInfo = 0; 7\tPEVENT_TRACE_SYSTEM_EVENT_INFORMATION eventInfo = 0; 8\tif (!g_isActive)return STATUS_UNSUCCESSFUL; 9\tdo { 10\tcountInfo = ExAllocatePoolWithTag(NonPagedPool, sizeof(EVENT_TRACE_PROFILE_COUNTER_INFORMATION),POOL_TAG); 11\tif (!countInfo) { 12\tDbgPrintEx(77, 0, \"Failed to allocate memory for PMC count.\\n\"); 13\tstatus = STATUS_INSUFFICIENT_RESOURCES; 14\tbreak; 15\t} 16\tcountInfo-\u003eEventTraceInformationClass = EventTraceProfileCounterListInformation; 17\tcountInfo-\u003eTraceHandle = 2; 18\tcountInfo-\u003eProfileSource[0] = 1; 19\t//\tSTATUS_WMI_ALREADY_ENABLED 20 // 第一步 21\tstatus = ZwSetSystemInformation(SystemPerformanceTraceInformation, countInfo, sizeof(EVENT_TRACE_PROFILE_COUNTER_INFORMATION)); 22\tif (!NT_SUCCESS(status) \u0026\u0026 status != STATUS_WMI_ALREADY_ENABLED) { 23\tDbgPrintEx(77, 0, \"Failed to configure PMC counter.status=%x\\n\", status); 24\tbreak; 25\t} 26\t27\teventInfo = ExAllocatePoolWithTag(NonPagedPool, sizeof(EVENT_TRACE_SYSTEM_EVENT_INFORMATION),POOL_TAG); 28\tif (!eventInfo) { 29\tDbgPrintEx(77, 0, \"Failed to allocate memory for event info.\\n\"); 30\tstatus = STATUS_INSUFFICIENT_RESOURCES; 31\tbreak; 32\t} 33 34\teventInfo-\u003eEventTraceInformationClass = EventTraceProfileEventListInformation; 35\teventInfo-\u003eTraceHandle = 2; 36\teventInfo-\u003eHookId[0] = SyscallHookId;// 0xF33 37\t// 第二步 38\tstatus = ZwSetSystemInformation(SystemPerformanceTraceInformation, eventInfo, sizeof(EVENT_TRACE_SYSTEM_EVENT_INFORMATION)); 39\tif (!NT_SUCCESS(status)) 40\t{ 41\tDbgPrintEx(77,0,\"failed to configure pmc event, status=%x\", status); 42\tbreak; 43\t} 44 45\t} while (FALSE); 46\tif (countInfo)ExFreePool(countInfo); 47\tif (eventInfo)ExFreePool(eventInfo); 48\tif (status == STATUS_WMI_ALREADY_ENABLED)return STATUS_SUCCESS; 49\treturn status; 50} 打造一个沙箱 可以说，ETW Hook是一个比较完美的沙箱监控手段。因为其只接管应用态的系统调用，不需要特别过滤内核调用；同时其工作环境皆在内核之中，不会对应用态程序暴露出Hook特征。\n因此我们可以参照Cuckoo，Hook一些常见的NT API来收集恶意软件的行为，然后将之传入我们的3环程序解析成易处理的JSON或者BSON格式的数据，再手写一个分析模块来自动化研究其恶意行为。同时由于我们的Hook运行在调用链的最底层，还可以用该Hook去遥测恶意程序的堆栈信息，检测如Hell's Gate及其变种的Ring-3脱钩手段。\n以下是一个简单的Demo，首先考虑使用MiniFilter框架将收集的调用信息作为日志传入Ring-3\n1// MiniFilter发送数据到 3 环 2NTSTATUS SendToUser(PVOID buffer, ULONG bufSize) { 3\tif (!g_ClientPort) return STATUS_INVALID_DEVICE_STATE; 4 5\tLARGE_INTEGER timeout; 6\ttimeout.QuadPart = -10 * 1000 * 1000; // 1 秒 超时时间 7 8\tNTSTATUS status = FltSendMessage( 9\tg_FilterHandle, 10\t\u0026g_ClientPort, 11\tbuffer, 12\tbufSize, 13\tNULL, 14\tNULL, 15\t\u0026timeout); 16 17\tif (!NT_SUCCESS(status)) { 18\tDbgPrintEx(77, 0, \"[%s] failed: 0x%X\\n\", __FUNCTION__,status); 19\t} 20\treturn status; 21} 比如想要监控跨进程的线程创建，可以这么写Hook函数：\n1NTSTATUS DetourNtCreateThreadEx( 2\t_Out_ PHANDLE ThreadHandle, 3\t_In_ ACCESS_MASK DesiredAccess, 4\t_In_opt_ POBJECT_ATTRIBUTES ObjectAttributes, 5\t_In_ HANDLE ProcessHandle, 6\t_In_ PVOID StartRoutine, 7\t_In_opt_ PVOID Argument, 8\t_In_ ULONG CreateFlags, 9\t_In_ ULONG_PTR ZeroBits, 10\t_In_opt_ SIZE_T StackSize, 11\t_In_opt_ SIZE_T MaximumStackSize, 12\t_In_opt_ PVOID AttributeList 13) { 14\t15\tNTSTATUS status = STATUS_SUCCESS; 16 RETURN_IF_NOT_PASSIVE(g_NtCreateThreadEx(ThreadHandle, DesiredAccess, ObjectAttributes, ProcessHandle, StartRoutine, Argument, CreateFlags, ZeroBits, StackSize, MaximumStackSize, AttributeList)); 17 18 StackDetect(); 19\tstatus = g_NtCreateThreadEx(ThreadHandle, DesiredAccess, ObjectAttributes, ProcessHandle, StartRoutine, Argument, CreateFlags, ZeroBits, StackSize, MaximumStackSize, AttributeList); 20 21 HANDLE targetPid = NULL; 22 // cross-process 23 if (NT_SUCCESS(status) \u0026\u0026 !_IsCurrentProcessHandle(ProcessHandle) \u0026\u0026 NT_SUCCESS(_GetPidFromProcessHandle(ProcessHandle, \u0026targetPid)) \u0026\u0026 targetPid != PsGetCurrentProcessId()) { 24 (VOID)LogManagerSetTargetProcess(targetPid, TRUE); 25 SYSCALL_PARAMETER params[MAX_SYSCALL_PARAMETERS]; 26 RtlZeroMemory(params, sizeof(params)); 27 _FillParamHandle(L\"TargetPid\", targetPid, \u0026params[0]); 28 _FillParamPtr(L\"StartRoutine\", StartRoutine, \u0026params[1]); 29 _FillParamUlong(L\"CreateFlags\", CreateFlags, \u0026params[2]); 30 _FillParamImageName(L\"ImageName\", targetPid, \u0026params[3]); 31 32 LogManagerSendLog(PsGetCurrentProcessId(), PsGetCurrentThreadId(), L\"NtCreateThreadEx\", L\"RemoteThread\", status, 4, params); 33 } 34 else { 35 #define THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER 0x4 36 if(CreateFlags == THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER) 37 LogManagerSendLog(PsGetCurrentProcessId(), PsGetCurrentThreadId(), L\"NtCreateThreadEx\", L\"DetectDebugger\", status, 0, NULL); 38 } 39 InterlockedDecrement(\u0026gHooksActive); 40\treturn status; 41} 普通的ETW Hook是全局的Hook，即所有的应用态系统调用都会被我们接管。因此还需要维护一个ProcessList记录样本的PID；对于跨进程的操作，比如有的样本注入shellcode至白进程，或者释放了新进程并拉起，则需要将新进程的PID也加入到ProcessList中，避免遗漏行为。上文中的LogManagerSetTargetProcess正是在做这件事。\n沙箱拓展：堆栈检测 上文中提到的Hell's Gate指的是一种构造gadget直接调用syscall指令进入内核的手法，能够做到规避3环的挂钩。但这样做导致其堆栈不正常，呈现出malware.exe -\u003e ntoskrnl.exe这样的调用链，因此我们可以在Hook开头加一个堆栈检测，检测其返回地址（存放在TrapFrame中）是否位于正常的模块（如ntdll.dll），否则判为一次恶意调用。\n1// 直接系统调用检测(SYSCALL) 2for (int i = 0; i \u003c MODULE_NUM; i++) { 3\tif (rip \u003e= g_UserModule[i].BaseAddress 4\t\u0026\u0026 rip \u003c= (ULONG64)g_UserModule[i].BaseAddress + g_UserModule[i].Size) 5\t{ 6\tabnormalSyscall = FALSE; 7\t// ntdll.dll需特殊判定，对抗间接系统调用 - 检测点1 8\tUNICODE_STRING tmp = { 0 }; 9\tRtlInitUnicodeString(\u0026tmp, L\"ntdll.dll\"); 10\tif (!RtlCompareUnicodeString(\u0026g_UserModule[i].ModuleName, \u0026tmp, TRUE)) 11\tabnormalSyscall = SpecialDetectSyscall(rip, systemCallIndex, TRUE); 12\tgoto log; 13 14\t} 15log: 16 17\tif (abnormalSyscall) { 18\tSYSCALL_PARAMETER params[1]; 19\tparams[0].Type = 2; 20\tRtlStringCchCopyW(params[0].Name, ARRAYSIZE(params[0].Name), L\"name\"); 21\tRtlStringCchCopyW((WCHAR*)params[0].Data, ARRAYSIZE(params[0].Data) / sizeof(WCHAR), g_SyscallTable[systemCallIndex].Name); 22\tparams[0].Size = (ULONG)(wcslen(g_SyscallTable[systemCallIndex].Name) * sizeof(WCHAR)); 23\tLogManagerSendLog(PsGetCurrentProcessId(), PsGetCurrentThreadId(), L\"Syscall\", L\"Abnormal Syscall\", 0, 1, params); 24\t} 从对抗的层面来讲这种检测是有欠缺的，因为现在武器化的SYSCALL通常是间接系统调用，调用链通常为malware.exe -\u003e ntdll.dll -\u003e ntoskrnl.exe，或者更加合法的malware.exe -\u003e kernel32.dll -\u003e ntdll.dll -\u003e ntoskrnl.exe ；更高级别的检测就是检测跳转处是否为正常的CALL，还是恶意软件自己维护的跳板。\n堆栈数据是EDR内存扫描的一个重要指标，但对于沙箱来说，跑出更多的行为才是最重要的，因此这里就不展开讨论了。\n演示 演示的样本为某厂攻击队的样本，采用了间接系统调用的API执行手段，普通的3环Hook无法捕捉到调用\n我仅实现了自动化拉起样本、传递调用数据等功能；更进一步地，可以考虑实现自动化重启虚拟机、分析调用数据并打行为标签、自动提取C2（可以通过网络过滤驱动实现）。\n参考文章及项目 [1] [原创]InfinityHook 可兼容最新版windows-软件逆向-看雪论坛-安全社区|非营利性质技术交流社区\n[2] 《Fun with another PatchGuard-compliant Hook - Reverse Engineering》 — Fun with another PatchGuard-compliant Hook - Reverse Engineering\n[3] https://github.com/zhutingxf/InfinityHookPro\n[4] https://github.com/Oxygen1a1/InfinityHook_latest\n",
+  "wordCount" : "4585",
+  "inLanguage": "zh",
+  "image": "https://i.postimg.cc/7hwBy7VS/calcr.png","datePublished": "2024-09-14T01:12:53+08:00",
+  "dateModified": "2024-09-14T01:12:53+08:00",
+  "author":{
+    "@type": "Person",
+    "name": "Loft"
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://ybliangcha.github.io/posts/etw-hook-based-system-sandbox/"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Loft's Blog",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://ybliangcha.github.io/favicon.png"
+    }
+  }
+}
+</script>
+</head>
+
+<body class=" dark" id="top">
+<script>
+    if (localStorage.getItem("pref-theme") === "light") {
+        document.body.classList.remove('dark')
+    }
+
+</script>
+
+<header class="header">
+    <nav class="nav">
+        <div class="logo">
+            <a href="https://ybliangcha.github.io/" accesskey="h" title="Loft&#39;s Blog (Alt + H)">Loft&#39;s Blog</a>
+            <div class="logo-switches">
+                <button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme">
+                    <svg id="moon" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <svg id="sun" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <ul id="menu">
+            <li>
+                <a href="https://ybliangcha.github.io/" title="Loft&#39;s Blog">
+                    <span>首页</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://ybliangcha.github.io/archives/" title="归档">
+                    <span>归档</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://ybliangcha.github.io/categories/" title="Categories">
+                    <span>分类</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://ybliangcha.github.io/tags/" title="Tags">
+                    <span>标签</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://ybliangcha.github.io/search/" title="搜索">
+                    <span>搜索</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://ybliangcha.github.io/about/" title="关于">
+                    <span>关于</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+</header>
+<main class="main">
+
+<article class="post-single">
+  <header class="post-header">
+    
+    <h1 class="post-title entry-hint-parent">
+      基于ETW Hook的自动化恶意代码分析沙箱设计
+    </h1>
+    <div class="post-meta"><span title='2024-09-14 01:12:53 +0800 CST'>2024-09-14</span>&nbsp;·&nbsp;10 分钟&nbsp;·&nbsp;Loft
+
+</div>
+  </header> <div class="toc">
+    <details >
+        <summary accesskey="c" title="(Alt + C)">
+            <span class="details">目录</span>
+        </summary>
+
+        <div class="inner"><ul>
+                <li>
+                    <a href="#%e5%89%8d%e8%a8%80" aria-label="前言">前言</a></li>
+                <li>
+                    <a href="#etw-hook%e6%a0%b8%e5%bf%83%e5%8e%9f%e7%90%86" aria-label="ETW Hook：核心原理">ETW Hook：核心原理</a></li>
+                <li>
+                    <a href="#etw-hook%e5%90%88%e7%90%86%e7%9a%84%e9%85%8d%e7%bd%ae" aria-label="ETW Hook：合理的配置">ETW Hook：合理的配置</a></li>
+                <li>
+                    <a href="#%e6%89%93%e9%80%a0%e4%b8%80%e4%b8%aa%e6%b2%99%e7%ae%b1" aria-label="打造一个沙箱">打造一个沙箱</a></li>
+                <li>
+                    <a href="#%e6%b2%99%e7%ae%b1%e6%8b%93%e5%b1%95%e5%a0%86%e6%a0%88%e6%a3%80%e6%b5%8b" aria-label="沙箱拓展：堆栈检测">沙箱拓展：堆栈检测</a></li>
+                <li>
+                    <a href="#%e6%bc%94%e7%a4%ba" aria-label="演示">演示</a></li>
+                <li>
+                    <a href="#%e5%8f%82%e8%80%83%e6%96%87%e7%ab%a0%e5%8f%8a%e9%a1%b9%e7%9b%ae" aria-label="参考文章及项目">参考文章及项目</a>
+                </li>
+            </ul>
+        </div>
+    </details>
+</div>
+
+  <div class="post-content"><h2 id="前言">前言<a hidden class="anchor" aria-hidden="true" href="#前言">#</a></h2>
+<p>本文中的沙箱，均指一个受控、虚拟化的环境，专门用来自动运行、监控和分析可疑程序的行为。传统的沙箱根据监控、收集恶意软件行为的方式，可以分为两种模式：一种是基于<strong>API Hook</strong>的沙箱，如Cuckoo；一种是基于虚拟化技术(VT-x with EPT)的沙箱，如DrakVuf。</p>
+<p>其中，Cuckoo沙箱通过<code>Inject.exe</code>启动样本并挂起，向其中注入<code>monitor.dll</code>对一百多个Native API做了Inline Hook，收集恶意软件的API的调用信息，再解析这些调用信息，打上对应的行为标签。</p>
+<p>这样做的缺陷很显然：由于<code>monitor.dll</code>与恶意软件共存，再加上Inline Hook的痕迹过于明显，很容易被探测出监控环境的存在。并且，在Ring-3下的Hook能力是很有限的，像<strong>ntdll重载、syscall</strong>这些方法都能轻易规避Hook，使得沙箱跑不出任何行为。</p>
+<p>因此，本文在Cuckoo沙箱工作原理的基础上进行拓展，从内核Hook的角度出发，设计一个更隐蔽、强大的沙箱（或者说是监控系统），以来减少安全分析员们的工作量。</p>
+<h2 id="etw-hook核心原理">ETW Hook：核心原理<a hidden class="anchor" aria-hidden="true" href="#etw-hook核心原理">#</a></h2>
+<p>在64位Windows操作系统上，微软引入了Patch Guard对操作系统中易受攻击的结构、函数进行监控，常规的[SSDT Hook](<a href="https://www.adlice.com/kernelmode-rootkits-part-1-ssdt-hooks/">内核模式 Rootkits，第一部分 | SSDT 钩子 • Adlice 软件 &mdash; KernelMode Rootkits, Part 1 | SSDT hooks • Adlice Software</a>)将会引发蓝屏。因此ETW Hook被提出，其核心原理就是利用ETW在遥测syscall时的**“漏洞”**劫持控制流实现<code>Native API Hook</code>。这一漏洞的成因是PG对一些内核函数指针表监控不严（通常在.data段中），我们可以替换某些指针实现Hook而不触发PG，整个调用链如下：</p>
+<p><img alt="KillChain.drawio" loading="lazy" src="https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/KillChain.drawio.png"></p>
+<p>本文讲解的这个Hook点来自[Oxygen]([<a href="https://bbs.kanxue.com/thread-281479.htm">原创]InfinityHook 可兼容最新版windows-软件逆向-看雪论坛-安全社区|非营利性质技术交流社区</a>)以及[Daax](<a href="https://revers.engineering/fun-with-pg-compliant-hook/">《Fun with another PatchGuard-compliant Hook - Reverse Engineering》 &mdash; Fun with another PatchGuard-compliant Hook - Reverse Engineering</a>)，向他们表示感谢！</p>
+<p>在Ring-3调用系统API后，最终会通过<code>syscall</code>指令进入内核（一般来说已经不用调用门了）。首先进入的就是内核中的<code>KiSystemCall64</code>函数；在这里，如果开启了<code> syscall Nt Kernel Logger</code>，ETW-Ti就会记录这条系统调用信息，如下：</p>
+<p><img alt="image-20250914125557460" loading="lazy" src="https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/image-20250914125557460.png"></p>
+<p>在ETW记录系统调用前，会把真实的函数地址暂存在栈上，调用完毕后恢复。这也就给了我们可乘之机，只要在<code>PerfInfoLogSysCallEntry</code>的调用链中寻到一处函数指针替换点，就可以<strong>劫持控制流修改栈上暂存的函数地址</strong>，从而实现Hook。</p>
+<p>在<code>PerfInfoLogSysCallEntry</code>中同样保存了<code>EventID</code>和<code>EVENT_DESCRIPTOR</code>在栈上：</p>
+<p><code>F33:501802</code></p>
+<p><img alt="image-20250914130238484" loading="lazy" src="https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/image-20250914130238484.png"></p>
+<p>将之作为辅助定位栈上函数地址的<code>Magic Number</code></p>
+<p>继续跟进到<code>EtwpLogKernelEvent</code>中，会发现一些有意思的函数：</p>
+<p><img alt="image-20250914155750957" loading="lazy" src="https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/image-20250914155750957.png"></p>
+<p>根据<code>ETW Logger</code>的配置情况，上面的三个函数可能会被执行；最开始的替换点是在<code>EtwpReserveTraceBuffer</code>中的<code>GetCpuClock</code>，但这个函数在高版本Windows已被修复，不适合替换了，因此我们跟进<code>EtwpReserveWithPmcCounters</code></p>
+<p><img alt="image-20250914160215355" loading="lazy" src="https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/image-20250914160215355.png"></p>
+<p>这里暴露出一个函数指针的调用，这正是我们想要的，查阅<code>HalPrivateDispatchTable</code>的[结构](<a href="https://www.vergiliusproject.com/kernels/x64/windows-11/21h2/HAL_PRIVATE_DISPATCH">Vergilius Project | HAL_PRIVATE_DISPATCH</a>)，替换掉<code>Table + 0x248</code>处的函数指针即可接管控制流，此时在栈上搜索两个<code>Magic Number</code>去定位到系统调用的函数地址并替换就实现了Hook，如下：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="c1">//
+</span></span></span><span class="line"><span class="ln"> 2</span><span class="cl"><span class="c1">//@brief 代理函数，劫持栈上的函数地址到自己的函数上，同时也是高频执行函数.
+</span></span></span><span class="line"><span class="ln"> 3</span><span class="cl"><span class="c1">//
+</span></span></span><span class="line"><span class="ln"> 4</span><span class="cl"><span class="c1"></span><span class="kt">void</span> <span class="nf">ProxyEtwpReserveWithPmcCounters</span><span class="p">(</span><span class="n">PVOID</span> <span class="n">Context</span><span class="p">,</span> <span class="n">ULONGLONG</span> <span class="n">TraceBuff</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 5</span><span class="cl">	<span class="n">USHORT</span> <span class="n">Magic</span> <span class="o">=</span> <span class="mh">0xF33</span><span class="p">;</span><span class="c1">//Magic 1
+</span></span></span><span class="line"><span class="ln"> 6</span><span class="cl"><span class="c1"></span>	<span class="n">ULONG</span> <span class="n">Signate</span> <span class="o">=</span> <span class="mh">0x501802</span><span class="p">;</span><span class="c1">//Magic 2
+</span></span></span><span class="line"><span class="ln"> 7</span><span class="cl"><span class="c1"></span>	<span class="n">ULONG</span> <span class="n">Magic2</span> <span class="o">=</span> <span class="mh">0x601802</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 8</span><span class="cl"><span class="cp">#define INFINITYHOOK_MAGIC_501802 ((unsigned long)0x501802) </span><span class="c1">//Win11 23606 以前系统特征码
+</span></span></span><span class="line"><span class="ln"> 9</span><span class="cl"><span class="c1"></span><span class="cp">#define INFINITYHOOK_MAGIC_601802 ((unsigned long)0x601802) </span><span class="c1">//Win11 23606 及以后系统的特征码
+</span></span></span><span class="line"><span class="ln">10</span><span class="cl"><span class="c1"></span><span class="cp">#define INFINITYHOOK_MAGIC_F33 ((unsigned short)0xF33)
+</span></span></span><span class="line"><span class="ln">11</span><span class="cl"><span class="cp"></span>	<span class="n">PULONG</span> <span class="n">RspPos</span> <span class="o">=</span> <span class="n">_AddressOfReturnAddress</span><span class="p">();</span>
+</span></span><span class="line"><span class="ln">12</span><span class="cl">	<span class="n">PULONG</span> <span class="n">RspLimit</span> <span class="o">=</span> <span class="n">__readgsqword</span><span class="p">(</span><span class="mh">0x1a8</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">13</span><span class="cl">	<span class="c1">// KPCR-&gt;Pcrb.CurrentThread Type:_KTHREAD*
+</span></span></span><span class="line"><span class="ln">14</span><span class="cl"><span class="c1"></span>	<span class="n">ULONG64</span> <span class="n">currentThread</span> <span class="o">=</span> <span class="n">__readgsqword</span><span class="p">(</span><span class="mh">0x188</span><span class="p">);</span><span class="c1">// OFFSET_KPCR_CURRENT_THREAD
+</span></span></span><span class="line"><span class="ln">15</span><span class="cl"><span class="c1"></span>	<span class="n">ULONG</span> <span class="n">systemCallIndex</span> <span class="o">=</span> <span class="o">*</span><span class="p">(</span><span class="n">ULONG</span><span class="o">*</span><span class="p">)(</span><span class="n">currentThread</span> <span class="o">+</span> <span class="mh">0x80</span><span class="p">);</span><span class="c1">// OFFSET_KTHREAD_SYSTEM_CALL_NUMBER
+</span></span></span><span class="line"><span class="ln">16</span><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="ln">17</span><span class="cl">
+</span></span><span class="line"><span class="ln">18</span><span class="cl">	<span class="k">do</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">19</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="n">KeGetCurrentIrql</span><span class="p">()</span> <span class="o">&lt;=</span> <span class="n">DISPATCH_LEVEL</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">20</span><span class="cl">			<span class="c1">// 不接管内核调用
+</span></span></span><span class="line"><span class="ln">21</span><span class="cl"><span class="c1"></span>			<span class="k">if</span> <span class="p">(</span><span class="n">ExGetPreviousMode</span><span class="p">()</span> <span class="o">==</span> <span class="n">KernelMode</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">22</span><span class="cl">				<span class="k">return</span> <span class="n">g_oriHalCollectPmcCounters</span><span class="p">(</span><span class="n">Context</span><span class="p">,</span> <span class="n">TraceBuff</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">23</span><span class="cl">			<span class="k">while</span> <span class="p">(</span><span class="n">RspPos</span> <span class="o">&lt;=</span> <span class="n">RspLimit</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">24</span><span class="cl">			<span class="p">{</span>
+</span></span><span class="line"><span class="ln">25</span><span class="cl">				<span class="k">if</span> <span class="p">(</span><span class="o">*</span><span class="p">((</span><span class="n">PUSHORT</span><span class="p">)(</span><span class="n">RspPos</span><span class="p">))</span> <span class="o">==</span> <span class="n">INFINITYHOOK_MAGIC_F33</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">26</span><span class="cl">				<span class="p">{</span>
+</span></span><span class="line"><span class="ln">27</span><span class="cl">					<span class="c1">// Win11 24H2兼容
+</span></span></span><span class="line"><span class="ln">28</span><span class="cl"><span class="c1"></span>					<span class="k">if</span> <span class="p">(</span><span class="n">RspPos</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="n">INFINITYHOOK_MAGIC_501802</span> <span class="o">||</span> <span class="n">RspPos</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="n">INFINITYHOOK_MAGIC_601802</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">29</span><span class="cl">					<span class="p">{</span>
+</span></span><span class="line"><span class="ln">30</span><span class="cl">
+</span></span><span class="line"><span class="ln">31</span><span class="cl">						<span class="k">for</span> <span class="p">(;</span> <span class="p">(</span><span class="n">ULONG64</span><span class="p">)</span><span class="n">RspPos</span> <span class="o">&lt;=</span> <span class="p">(</span><span class="n">ULONG64</span><span class="p">)</span><span class="n">RspLimit</span><span class="p">;</span> <span class="o">++</span><span class="n">RspPos</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">32</span><span class="cl">						<span class="p">{</span>
+</span></span><span class="line"><span class="ln">33</span><span class="cl">							<span class="c1">// 执行到这里则已经确认是SYSCALL的ETW记录，可以开始遍历栈
+</span></span></span><span class="line"><span class="ln">34</span><span class="cl"><span class="c1"></span>                            <span class="c1">// 找在SSDT表范围内的地址，找到既是SYSCALL的地址
+</span></span></span><span class="line"><span class="ln">35</span><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="ln">36</span><span class="cl">
+</span></span><span class="line"><span class="ln">37</span><span class="cl">							<span class="n">ULONG64</span><span class="o">*</span> <span class="n">pllValue</span> <span class="o">=</span> <span class="p">(</span><span class="n">ULONG64</span><span class="o">*</span><span class="p">)</span><span class="n">RspPos</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">38</span><span class="cl">							<span class="k">if</span> <span class="p">((</span><span class="o">*</span><span class="n">pllValue</span> <span class="o">&gt;=</span> <span class="n">PAGE_ALIGN</span><span class="p">(</span><span class="n">g_SystemCallTable</span><span class="p">)</span> <span class="o">&amp;&amp;</span>
+</span></span><span class="line"><span class="ln">39</span><span class="cl">								<span class="p">(</span><span class="o">*</span><span class="n">pllValue</span> <span class="o">&lt;=</span> <span class="n">PAGE_ALIGN</span><span class="p">(</span><span class="n">g_SystemCallTable</span> <span class="o">+</span> <span class="n">PAGE_SIZE</span> <span class="o">*</span> <span class="mi">2</span><span class="p">))))</span>
+</span></span><span class="line"><span class="ln">40</span><span class="cl">							<span class="p">{</span>
+</span></span><span class="line"><span class="ln">41</span><span class="cl">
+</span></span><span class="line"><span class="ln">42</span><span class="cl">								<span class="n">HANDLE</span> <span class="n">pid</span> <span class="o">=</span> <span class="n">PsGetCurrentProcessId</span><span class="p">();</span>
+</span></span><span class="line"><span class="ln">43</span><span class="cl">
+</span></span><span class="line"><span class="ln">44</span><span class="cl">								<span class="k">if</span> <span class="p">(</span><span class="n">LogManagerIsTargetProcess</span><span class="p">(</span><span class="n">pid</span><span class="p">))</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">45</span><span class="cl">									<span class="c1">// 此时IRQL == DISPATCH_LEVEL
+</span></span></span><span class="line"><span class="ln">46</span><span class="cl"><span class="c1"></span>									<span class="c1">// 只有目标进程才Hook，其他进程正常放行
+</span></span></span><span class="line"><span class="ln">47</span><span class="cl"><span class="c1"></span>									<span class="n">ProcessSyscall</span><span class="p">(</span><span class="n">systemCallIndex</span><span class="p">,</span> <span class="n">RspPos</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">48</span><span class="cl">									<span class="k">return</span> <span class="n">g_oriHalCollectPmcCounters</span><span class="p">(</span><span class="n">Context</span><span class="p">,</span> <span class="n">TraceBuff</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">49</span><span class="cl">								<span class="p">}</span>
+</span></span><span class="line"><span class="ln">50</span><span class="cl">								<span class="k">else</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">51</span><span class="cl">									<span class="k">return</span> <span class="n">g_oriHalCollectPmcCounters</span><span class="p">(</span><span class="n">Context</span><span class="p">,</span> <span class="n">TraceBuff</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">52</span><span class="cl">								<span class="p">}</span>
+</span></span><span class="line"><span class="ln">53</span><span class="cl">
+</span></span><span class="line"><span class="ln">54</span><span class="cl">
+</span></span><span class="line"><span class="ln">55</span><span class="cl">							<span class="p">}</span>
+</span></span><span class="line"><span class="ln">56</span><span class="cl">						<span class="p">}</span>
+</span></span><span class="line"><span class="ln">57</span><span class="cl">					<span class="p">}</span>
+</span></span><span class="line"><span class="ln">58</span><span class="cl">
+</span></span><span class="line"><span class="ln">59</span><span class="cl">				<span class="p">}</span>
+</span></span><span class="line"><span class="ln">60</span><span class="cl">				<span class="o">++</span><span class="n">RspPos</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">61</span><span class="cl">
+</span></span><span class="line"><span class="ln">62</span><span class="cl">			<span class="p">}</span>
+</span></span><span class="line"><span class="ln">63</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">64</span><span class="cl">	<span class="p">}</span> <span class="k">while</span> <span class="p">(</span><span class="n">FALSE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">65</span><span class="cl">
+</span></span><span class="line"><span class="ln">66</span><span class="cl">	<span class="k">return</span> <span class="n">g_oriHalCollectPmcCounters</span><span class="p">(</span><span class="n">Context</span><span class="p">,</span> <span class="n">TraceBuff</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">67</span><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>但此时离<code>ETW Hook</code>还差了一步，由于正常来说控制流不会走到Hook点，所以需要参考一些文档手动配置<code>ETW Logger</code>走到我们替换的地方。</p>
+<h2 id="etw-hook合理的配置">ETW Hook：合理的配置<a hidden class="anchor" aria-hidden="true" href="#etw-hook合理的配置">#</a></h2>
+<p>离实现<code>ETW Hook</code>只剩一步，那就是配置<code>ETW Logger</code>使其正确执行到我们想要劫持的<code>EtwpReserveWithPmcCounter</code>，这分为两部分：</p>
+<ul>
+<li>配置<code>ETW NT Kernel Logger</code>以及系统调用事件开启</li>
+<li>配置<code>Event Trace</code>类使得控制流走到<code>EtwpReserveWithPmcCounter</code></li>
+</ul>
+<p>第一步不困难，<code>CKCL_TRACE_PROPERTIES</code>是一个相对公开的结构体：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="c1">//
+</span></span></span><span class="line"><span class="ln"> 2</span><span class="cl"><span class="c1">//@brief ֹ开启Nt kernel logger etw
+</span></span></span><span class="line"><span class="ln"> 3</span><span class="cl"><span class="c1">//
+</span></span></span><span class="line"><span class="ln"> 4</span><span class="cl"><span class="c1">// 
+</span></span></span><span class="line"><span class="ln"> 5</span><span class="cl"><span class="c1"></span><span class="n">NTSTATUS</span> <span class="nf">StartOrStopTrace</span><span class="p">(</span><span class="n">BOOLEAN</span> <span class="n">control</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 6</span><span class="cl">	<span class="n">NTSTATUS</span> <span class="n">status</span> <span class="o">=</span> <span class="n">STATUS_UNSUCCESSFUL</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 7</span><span class="cl">	<span class="n">CKCL_TRACE_PROPERTIES</span><span class="o">*</span> <span class="n">ckclProperty</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 8</span><span class="cl">	<span class="n">ULONG</span> <span class="n">lengthReturned</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 9</span><span class="cl">	<span class="k">do</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">10</span><span class="cl">		
+</span></span><span class="line"><span class="ln">11</span><span class="cl">		<span class="n">ckclProperty</span> <span class="o">=</span> <span class="n">ExAllocatePoolWithTag</span><span class="p">(</span><span class="n">NonPagedPool</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">,</span> <span class="n">POOL_TAG</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">12</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">ckclProperty</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">13</span><span class="cl">			<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;Failed to allocate memory for ckcl property.</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">14</span><span class="cl">			<span class="n">status</span> <span class="o">=</span> <span class="n">STATUS_INSUFFICIENT_RESOURCES</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">15</span><span class="cl">			<span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">16</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">17</span><span class="cl">		<span class="n">memset</span><span class="p">(</span><span class="n">ckclProperty</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">18</span><span class="cl">		<span class="n">UNICODE_STRING</span> <span class="n">tmp</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln">19</span><span class="cl">		<span class="n">RtlInitUnicodeString</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">,</span> <span class="sa">L</span><span class="s">&#34;Circular Kernel Context Logger&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">20</span><span class="cl">		<span class="n">ckclProperty</span><span class="o">-&gt;</span><span class="n">Wnode</span><span class="p">.</span><span class="n">BufferSize</span> <span class="o">=</span> <span class="n">PAGE_SIZE</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">21</span><span class="cl">		<span class="n">ckclProperty</span><span class="o">-&gt;</span><span class="n">Wnode</span><span class="p">.</span><span class="n">Flags</span> <span class="o">=</span> <span class="n">WNODE_FLAG_TRACED_GUID</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">22</span><span class="cl">		<span class="n">ckclProperty</span><span class="o">-&gt;</span><span class="n">ProviderName</span> <span class="o">=</span> <span class="n">tmp</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">23</span><span class="cl">		<span class="n">ckclProperty</span><span class="o">-&gt;</span><span class="n">Wnode</span><span class="p">.</span><span class="n">Guid</span> <span class="o">=</span> <span class="n">CkclSessionGuid</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">24</span><span class="cl">		<span class="n">ckclProperty</span><span class="o">-&gt;</span><span class="n">Wnode</span><span class="p">.</span><span class="n">ClientContext</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">25</span><span class="cl">		<span class="n">ckclProperty</span><span class="o">-&gt;</span><span class="n">BufferSize</span> <span class="o">=</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">ULONG</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">26</span><span class="cl">		<span class="n">ckclProperty</span><span class="o">-&gt;</span><span class="n">MinimumBuffers</span> <span class="o">=</span> <span class="n">ckclProperty</span><span class="o">-&gt;</span><span class="n">MaximumBuffers</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">27</span><span class="cl">		<span class="n">ckclProperty</span><span class="o">-&gt;</span><span class="n">LogFileMode</span> <span class="o">=</span> <span class="n">EVENT_TRACE_BUFFERING_MODE</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">28</span><span class="cl">
+</span></span><span class="line"><span class="ln">29</span><span class="cl">		<span class="n">status</span> <span class="o">=</span> <span class="n">ZwTraceControl</span><span class="p">(</span><span class="n">control</span> <span class="o">?</span> <span class="nl">EtwpStartTrace</span> <span class="p">:</span> <span class="n">EtwpStopTrace</span><span class="p">,</span> <span class="n">ckclProperty</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">,</span> <span class="n">ckclProperty</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">lengthReturned</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">30</span><span class="cl">		<span class="c1">// STATUS_OBJECT_NAME_COLLISION
+</span></span></span><span class="line"><span class="ln">31</span><span class="cl"><span class="c1"></span>		<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">NT_SUCCESS</span><span class="p">(</span><span class="n">status</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="n">status</span> <span class="o">!=</span> <span class="n">STATUS_OBJECT_NAME_COLLISION</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">32</span><span class="cl">			<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;Failed to enable kernel logger etw trace,status=%x&#34;</span><span class="p">,</span> <span class="n">status</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">33</span><span class="cl">			<span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">34</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">35</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="n">control</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">36</span><span class="cl">		<span class="p">{</span>
+</span></span><span class="line"><span class="ln">37</span><span class="cl">			<span class="n">ckclProperty</span><span class="o">-&gt;</span><span class="n">EnableFlags</span> <span class="o">=</span> <span class="n">EVENT_TRACE_FLAG_SYSTEMCALL</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">38</span><span class="cl">
+</span></span><span class="line"><span class="ln">39</span><span class="cl">			<span class="n">status</span> <span class="o">=</span> <span class="n">ZwTraceControl</span><span class="p">(</span><span class="n">EtwpUpdateTrace</span><span class="p">,</span> <span class="n">ckclProperty</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">,</span> <span class="n">ckclProperty</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">lengthReturned</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">40</span><span class="cl">			<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">NT_SUCCESS</span><span class="p">(</span><span class="n">status</span><span class="p">))</span>
+</span></span><span class="line"><span class="ln">41</span><span class="cl">			<span class="p">{</span>
+</span></span><span class="line"><span class="ln">42</span><span class="cl">				<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;Failed to enable syscall etw, errcode=%x&#34;</span><span class="p">,</span> <span class="n">status</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">43</span><span class="cl">				<span class="n">StartOrStopTrace</span><span class="p">(</span><span class="n">FALSE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">44</span><span class="cl">				<span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">45</span><span class="cl">			<span class="p">}</span>
+</span></span><span class="line"><span class="ln">46</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">47</span><span class="cl">	<span class="p">}</span> <span class="k">while</span> <span class="p">(</span><span class="n">FALSE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">48</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="n">ckclProperty</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">49</span><span class="cl">		<span class="n">ExFreePool</span><span class="p">(</span><span class="n">ckclProperty</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">50</span><span class="cl">	<span class="k">return</span> <span class="n">status</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">51</span><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>对于第二步，由于没有公开的结构文档，所以需要自己配置相关的内容，从上面的代码中抠出条件：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln">1</span><span class="cl"><span class="n">Flags</span> <span class="o">&amp;</span> <span class="mh">0x800</span> <span class="o">&amp;&amp;</span> 
+</span></span><span class="line"><span class="ln">2</span><span class="cl"><span class="n">LoggerContext</span><span class="o">-&gt;</span><span class="n">PmcData</span><span class="o">-&gt;</span><span class="n">HookIdCount</span> <span class="o">!=</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> 
+</span></span><span class="line"><span class="ln">3</span><span class="cl"><span class="n">PmcData</span><span class="o">-&gt;</span><span class="n">HookId</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="o">==</span> <span class="n">HookID</span>
+</span></span></code></pre></div><p>这里的Flags是这样一个<code>Union Struct</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="k">union</span>
+</span></span><span class="line"><span class="ln"> 2</span><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 3</span><span class="cl">        <span class="n">ULONG</span> <span class="n">Flags</span><span class="p">;</span>                                                        <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln"> 4</span><span class="cl"><span class="c1"></span>        <span class="k">struct</span>
+</span></span><span class="line"><span class="ln"> 5</span><span class="cl">        <span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 6</span><span class="cl">            <span class="n">ULONG</span> <span class="nl">Persistent</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                             <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln"> 7</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">AutoLogger</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                             <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln"> 8</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">FsReady</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                                <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln"> 9</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">RealTime</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                               <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">10</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">Wow</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                                    <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">11</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">KernelTrace</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                            <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">12</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">NoMoreEnable</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                           <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">13</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">StackTracing</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                           <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">14</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">ErrorLogged</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                            <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">15</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">RealtimeLoggerContextFreed</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                             <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">16</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">PebsTracing</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                            <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">17</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">PmcCounters</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>  <span class="c1">// 我们关注的位                                     
+</span></span></span><span class="line"><span class="ln">18</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">PageAlignBuffers</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                       <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">19</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">StackLookasideListAllocated</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                            <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">20</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">SecurityTrace</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                          <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">21</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">LastBranchTracing</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                      <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">22</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">SystemLoggerIndex</span><span class="p">:</span><span class="mi">8</span><span class="p">;</span>                                      <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">23</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">StackCaching</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                           <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">24</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">ProviderTracking</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                       <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">25</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">ProcessorTrace</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                         <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">26</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">QpcDeltaTracking</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                       <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">27</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">MarkerBufferSaved</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                      <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">28</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">LargeMdlPages</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                          <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">29</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">ExcludeKernelStack</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                     <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">30</span><span class="cl"><span class="c1"></span>            <span class="n">ULONG</span> <span class="nl">BootLogger</span><span class="p">:</span><span class="mi">1</span><span class="p">;</span>                                             <span class="c1">//0x330
+</span></span></span><span class="line"><span class="ln">31</span><span class="cl"><span class="c1"></span>        <span class="p">};</span>
+</span></span><span class="line"><span class="ln">32</span><span class="cl">    <span class="p">};</span>
+</span></span></code></pre></div><p>在[这篇文档中](<a href="https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/ntetw/event_trace_information_class.htm">事件跟踪信息类 &mdash; EVENT_TRACE_INFORMATION_CLASS</a>)告诉我们，需要调用<code>NtSetThreadInformation</code>来设置Flags以及HookID。</p>
+<p><img alt="2f40cfac-8c9f-4517-a76b-b849df52fe12" loading="lazy" src="https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/2f40cfac-8c9f-4517-a76b-b849df52fe12.png"></p>
+<p>我们跟进<code>NtSetThreadInformation -&gt; EtwSetPerformanceTraceInformation</code>去找到具体的内容</p>
+<p><img alt="image-20250914164907726" loading="lazy" src="https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/image-20250914164907726.png"></p>
+<p>对照上面的控制流条件以及相关配置文档，需要进行两步操作：</p>
+<ul>
+<li>调用<code> ZwSetSystemInformation</code>分配一个<code>PMC Profile Source</code>，将<code>Flags.PmcCounters</code>置位</li>
+<li>调用<code>ZwSetSystemInfomration</code>设置<code>HookId</code>为<code>0xF33</code></li>
+</ul>
+<p>参考如下代码：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="c1">//
+</span></span></span><span class="line"><span class="ln"> 2</span><span class="cl"><span class="c1">//@brief 开启PMC计数器 PerformanceCounter
+</span></span></span><span class="line"><span class="ln"> 3</span><span class="cl"><span class="c1">//
+</span></span></span><span class="line"><span class="ln"> 4</span><span class="cl"><span class="c1"></span><span class="n">NTSTATUS</span> <span class="nf">OpenPmcCounter</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 5</span><span class="cl">	<span class="n">NTSTATUS</span> <span class="n">status</span> <span class="o">=</span> <span class="n">STATUS_SUCCESS</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 6</span><span class="cl">	<span class="n">PEVENT_TRACE_PROFILE_COUNTER_INFORMATION</span> <span class="n">countInfo</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 7</span><span class="cl">	<span class="n">PEVENT_TRACE_SYSTEM_EVENT_INFORMATION</span> <span class="n">eventInfo</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 8</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">g_isActive</span><span class="p">)</span><span class="k">return</span> <span class="n">STATUS_UNSUCCESSFUL</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 9</span><span class="cl">	<span class="k">do</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">10</span><span class="cl">		<span class="n">countInfo</span> <span class="o">=</span> <span class="n">ExAllocatePoolWithTag</span><span class="p">(</span><span class="n">NonPagedPool</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">EVENT_TRACE_PROFILE_COUNTER_INFORMATION</span><span class="p">),</span><span class="n">POOL_TAG</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">11</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">countInfo</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">12</span><span class="cl">			<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;Failed to allocate memory for PMC count.</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">13</span><span class="cl">			<span class="n">status</span> <span class="o">=</span> <span class="n">STATUS_INSUFFICIENT_RESOURCES</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">14</span><span class="cl">			<span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">15</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">16</span><span class="cl">		<span class="n">countInfo</span><span class="o">-&gt;</span><span class="n">EventTraceInformationClass</span> <span class="o">=</span> <span class="n">EventTraceProfileCounterListInformation</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">17</span><span class="cl">		<span class="n">countInfo</span><span class="o">-&gt;</span><span class="n">TraceHandle</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">18</span><span class="cl">		<span class="n">countInfo</span><span class="o">-&gt;</span><span class="n">ProfileSource</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">19</span><span class="cl">		<span class="c1">//	STATUS_WMI_ALREADY_ENABLED
+</span></span></span><span class="line"><span class="ln">20</span><span class="cl"><span class="c1"></span>        <span class="c1">// 第一步
+</span></span></span><span class="line"><span class="ln">21</span><span class="cl"><span class="c1"></span>		<span class="n">status</span> <span class="o">=</span> <span class="n">ZwSetSystemInformation</span><span class="p">(</span><span class="n">SystemPerformanceTraceInformation</span><span class="p">,</span> <span class="n">countInfo</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">EVENT_TRACE_PROFILE_COUNTER_INFORMATION</span><span class="p">));</span>
+</span></span><span class="line"><span class="ln">22</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">NT_SUCCESS</span><span class="p">(</span><span class="n">status</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="n">status</span> <span class="o">!=</span> <span class="n">STATUS_WMI_ALREADY_ENABLED</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">23</span><span class="cl">			<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;Failed to configure PMC counter.status=%x</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">status</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">24</span><span class="cl">			<span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">25</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">26</span><span class="cl">		
+</span></span><span class="line"><span class="ln">27</span><span class="cl">		<span class="n">eventInfo</span> <span class="o">=</span> <span class="n">ExAllocatePoolWithTag</span><span class="p">(</span><span class="n">NonPagedPool</span><span class="p">,</span>  <span class="k">sizeof</span><span class="p">(</span><span class="n">EVENT_TRACE_SYSTEM_EVENT_INFORMATION</span><span class="p">),</span><span class="n">POOL_TAG</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">28</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">eventInfo</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">29</span><span class="cl">			<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;Failed to allocate memory for event info.</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">30</span><span class="cl">			<span class="n">status</span> <span class="o">=</span> <span class="n">STATUS_INSUFFICIENT_RESOURCES</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">31</span><span class="cl">			<span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">32</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">33</span><span class="cl">
+</span></span><span class="line"><span class="ln">34</span><span class="cl">		<span class="n">eventInfo</span><span class="o">-&gt;</span><span class="n">EventTraceInformationClass</span> <span class="o">=</span> <span class="n">EventTraceProfileEventListInformation</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">35</span><span class="cl">		<span class="n">eventInfo</span><span class="o">-&gt;</span><span class="n">TraceHandle</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">36</span><span class="cl">		<span class="n">eventInfo</span><span class="o">-&gt;</span><span class="n">HookId</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">SyscallHookId</span><span class="p">;</span><span class="c1">// 0xF33
+</span></span></span><span class="line"><span class="ln">37</span><span class="cl"><span class="c1"></span>		<span class="c1">// 第二步
+</span></span></span><span class="line"><span class="ln">38</span><span class="cl"><span class="c1"></span>		<span class="n">status</span> <span class="o">=</span> <span class="n">ZwSetSystemInformation</span><span class="p">(</span><span class="n">SystemPerformanceTraceInformation</span><span class="p">,</span> <span class="n">eventInfo</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">EVENT_TRACE_SYSTEM_EVENT_INFORMATION</span><span class="p">));</span>
+</span></span><span class="line"><span class="ln">39</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">NT_SUCCESS</span><span class="p">(</span><span class="n">status</span><span class="p">))</span>
+</span></span><span class="line"><span class="ln">40</span><span class="cl">		<span class="p">{</span>
+</span></span><span class="line"><span class="ln">41</span><span class="cl">			<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="s">&#34;failed to configure pmc event, status=%x&#34;</span><span class="p">,</span> <span class="n">status</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">42</span><span class="cl">			<span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">43</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">44</span><span class="cl">
+</span></span><span class="line"><span class="ln">45</span><span class="cl">	<span class="p">}</span> <span class="k">while</span> <span class="p">(</span><span class="n">FALSE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">46</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="n">countInfo</span><span class="p">)</span><span class="n">ExFreePool</span><span class="p">(</span><span class="n">countInfo</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">47</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="n">eventInfo</span><span class="p">)</span><span class="n">ExFreePool</span><span class="p">(</span><span class="n">eventInfo</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">48</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="n">status</span> <span class="o">==</span> <span class="n">STATUS_WMI_ALREADY_ENABLED</span><span class="p">)</span><span class="k">return</span> <span class="n">STATUS_SUCCESS</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">49</span><span class="cl">	<span class="k">return</span> <span class="n">status</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">50</span><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="打造一个沙箱">打造一个沙箱<a hidden class="anchor" aria-hidden="true" href="#打造一个沙箱">#</a></h2>
+<p>可以说，<code>ETW Hook</code>是一个比较完美的沙箱监控手段。因为其只接管应用态的系统调用，不需要特别过滤内核调用；同时其工作环境皆在内核之中，不会对应用态程序暴露出Hook特征。</p>
+<p>因此我们可以参照<code>Cuckoo</code>，Hook一些常见的NT API来收集恶意软件的行为，然后将之传入我们的3环程序解析成易处理的JSON或者BSON格式的数据，再手写一个分析模块来自动化研究其恶意行为。同时由于我们的Hook运行在调用链的最底层，还可以用该Hook去遥测恶意程序的堆栈信息，检测如<code>Hell's Gate</code>及其变种的Ring-3脱钩手段。</p>
+<p>以下是一个简单的Demo，首先考虑使用<code>MiniFilter</code>框架将收集的调用信息作为日志传入Ring-3</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="c1">// MiniFilter发送数据到 3 环
+</span></span></span><span class="line"><span class="ln"> 2</span><span class="cl"><span class="c1"></span><span class="n">NTSTATUS</span> <span class="nf">SendToUser</span><span class="p">(</span><span class="n">PVOID</span> <span class="n">buffer</span><span class="p">,</span> <span class="n">ULONG</span> <span class="n">bufSize</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 3</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">g_ClientPort</span><span class="p">)</span> <span class="k">return</span> <span class="n">STATUS_INVALID_DEVICE_STATE</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 4</span><span class="cl">
+</span></span><span class="line"><span class="ln"> 5</span><span class="cl">	<span class="n">LARGE_INTEGER</span> <span class="n">timeout</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 6</span><span class="cl">	<span class="n">timeout</span><span class="p">.</span><span class="n">QuadPart</span> <span class="o">=</span> <span class="o">-</span><span class="mi">10</span> <span class="o">*</span> <span class="mi">1000</span> <span class="o">*</span> <span class="mi">1000</span><span class="p">;</span>  <span class="c1">// 1 秒 超时时间
+</span></span></span><span class="line"><span class="ln"> 7</span><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="ln"> 8</span><span class="cl">	<span class="n">NTSTATUS</span> <span class="n">status</span> <span class="o">=</span> <span class="n">FltSendMessage</span><span class="p">(</span>
+</span></span><span class="line"><span class="ln"> 9</span><span class="cl">		<span class="n">g_FilterHandle</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln">10</span><span class="cl">		<span class="o">&amp;</span><span class="n">g_ClientPort</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln">11</span><span class="cl">		<span class="n">buffer</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln">12</span><span class="cl">		<span class="n">bufSize</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln">13</span><span class="cl">		<span class="nb">NULL</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln">14</span><span class="cl">		<span class="nb">NULL</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln">15</span><span class="cl">		<span class="o">&amp;</span><span class="n">timeout</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">16</span><span class="cl">
+</span></span><span class="line"><span class="ln">17</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">NT_SUCCESS</span><span class="p">(</span><span class="n">status</span><span class="p">))</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">18</span><span class="cl">		<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;[%s] failed: 0x%X</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">__FUNCTION__</span><span class="p">,</span><span class="n">status</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">19</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">20</span><span class="cl">	<span class="k">return</span> <span class="n">status</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">21</span><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>比如想要监控跨进程的线程创建，可以这么写Hook函数：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="n">NTSTATUS</span> <span class="nf">DetourNtCreateThreadEx</span><span class="p">(</span>
+</span></span><span class="line"><span class="ln"> 2</span><span class="cl">	<span class="n">_Out_</span> <span class="n">PHANDLE</span> <span class="n">ThreadHandle</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 3</span><span class="cl">	<span class="n">_In_</span> <span class="n">ACCESS_MASK</span> <span class="n">DesiredAccess</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 4</span><span class="cl">	<span class="n">_In_opt_</span> <span class="n">POBJECT_ATTRIBUTES</span> <span class="n">ObjectAttributes</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 5</span><span class="cl">	<span class="n">_In_</span> <span class="n">HANDLE</span> <span class="n">ProcessHandle</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 6</span><span class="cl">	<span class="n">_In_</span> <span class="n">PVOID</span> <span class="n">StartRoutine</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 7</span><span class="cl">	<span class="n">_In_opt_</span> <span class="n">PVOID</span> <span class="n">Argument</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 8</span><span class="cl">	<span class="n">_In_</span> <span class="n">ULONG</span> <span class="n">CreateFlags</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 9</span><span class="cl">	<span class="n">_In_</span> <span class="n">ULONG_PTR</span> <span class="n">ZeroBits</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln">10</span><span class="cl">	<span class="n">_In_opt_</span> <span class="n">SIZE_T</span> <span class="n">StackSize</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln">11</span><span class="cl">	<span class="n">_In_opt_</span> <span class="n">SIZE_T</span> <span class="n">MaximumStackSize</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln">12</span><span class="cl">	<span class="n">_In_opt_</span> <span class="n">PVOID</span> <span class="n">AttributeList</span>
+</span></span><span class="line"><span class="ln">13</span><span class="cl"><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">14</span><span class="cl">	
+</span></span><span class="line"><span class="ln">15</span><span class="cl">	<span class="n">NTSTATUS</span> <span class="n">status</span> <span class="o">=</span> <span class="n">STATUS_SUCCESS</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">16</span><span class="cl">    <span class="n">RETURN_IF_NOT_PASSIVE</span><span class="p">(</span><span class="n">g_NtCreateThreadEx</span><span class="p">(</span><span class="n">ThreadHandle</span><span class="p">,</span> <span class="n">DesiredAccess</span><span class="p">,</span> <span class="n">ObjectAttributes</span><span class="p">,</span> <span class="n">ProcessHandle</span><span class="p">,</span> <span class="n">StartRoutine</span><span class="p">,</span> <span class="n">Argument</span><span class="p">,</span> <span class="n">CreateFlags</span><span class="p">,</span> <span class="n">ZeroBits</span><span class="p">,</span> <span class="n">StackSize</span><span class="p">,</span> <span class="n">MaximumStackSize</span><span class="p">,</span> <span class="n">AttributeList</span><span class="p">));</span>
+</span></span><span class="line"><span class="ln">17</span><span class="cl">
+</span></span><span class="line"><span class="ln">18</span><span class="cl">    <span class="n">StackDetect</span><span class="p">();</span>
+</span></span><span class="line"><span class="ln">19</span><span class="cl">	<span class="n">status</span> <span class="o">=</span> <span class="n">g_NtCreateThreadEx</span><span class="p">(</span><span class="n">ThreadHandle</span><span class="p">,</span> <span class="n">DesiredAccess</span><span class="p">,</span> <span class="n">ObjectAttributes</span><span class="p">,</span> <span class="n">ProcessHandle</span><span class="p">,</span> <span class="n">StartRoutine</span><span class="p">,</span> <span class="n">Argument</span><span class="p">,</span> <span class="n">CreateFlags</span><span class="p">,</span> <span class="n">ZeroBits</span><span class="p">,</span> <span class="n">StackSize</span><span class="p">,</span> <span class="n">MaximumStackSize</span><span class="p">,</span> <span class="n">AttributeList</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">20</span><span class="cl">
+</span></span><span class="line"><span class="ln">21</span><span class="cl">    <span class="n">HANDLE</span> <span class="n">targetPid</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">22</span><span class="cl">    <span class="c1">// cross-process
+</span></span></span><span class="line"><span class="ln">23</span><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="p">(</span><span class="n">NT_SUCCESS</span><span class="p">(</span><span class="n">status</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">_IsCurrentProcessHandle</span><span class="p">(</span><span class="n">ProcessHandle</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="n">NT_SUCCESS</span><span class="p">(</span><span class="n">_GetPidFromProcessHandle</span><span class="p">(</span><span class="n">ProcessHandle</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">targetPid</span><span class="p">))</span> <span class="o">&amp;&amp;</span> <span class="n">targetPid</span> <span class="o">!=</span> <span class="n">PsGetCurrentProcessId</span><span class="p">())</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">24</span><span class="cl">        <span class="p">(</span><span class="n">VOID</span><span class="p">)</span><span class="n">LogManagerSetTargetProcess</span><span class="p">(</span><span class="n">targetPid</span><span class="p">,</span> <span class="n">TRUE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">25</span><span class="cl">        <span class="n">SYSCALL_PARAMETER</span> <span class="n">params</span><span class="p">[</span><span class="n">MAX_SYSCALL_PARAMETERS</span><span class="p">];</span>
+</span></span><span class="line"><span class="ln">26</span><span class="cl">        <span class="n">RtlZeroMemory</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">params</span><span class="p">));</span>
+</span></span><span class="line"><span class="ln">27</span><span class="cl">        <span class="n">_FillParamHandle</span><span class="p">(</span><span class="sa">L</span><span class="s">&#34;TargetPid&#34;</span><span class="p">,</span> <span class="n">targetPid</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">params</span><span class="p">[</span><span class="mi">0</span><span class="p">]);</span>
+</span></span><span class="line"><span class="ln">28</span><span class="cl">        <span class="n">_FillParamPtr</span><span class="p">(</span><span class="sa">L</span><span class="s">&#34;StartRoutine&#34;</span><span class="p">,</span> <span class="n">StartRoutine</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">params</span><span class="p">[</span><span class="mi">1</span><span class="p">]);</span>
+</span></span><span class="line"><span class="ln">29</span><span class="cl">        <span class="n">_FillParamUlong</span><span class="p">(</span><span class="sa">L</span><span class="s">&#34;CreateFlags&#34;</span><span class="p">,</span> <span class="n">CreateFlags</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">params</span><span class="p">[</span><span class="mi">2</span><span class="p">]);</span>
+</span></span><span class="line"><span class="ln">30</span><span class="cl">        <span class="n">_FillParamImageName</span><span class="p">(</span><span class="sa">L</span><span class="s">&#34;ImageName&#34;</span><span class="p">,</span> <span class="n">targetPid</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">params</span><span class="p">[</span><span class="mi">3</span><span class="p">]);</span>
+</span></span><span class="line"><span class="ln">31</span><span class="cl">        
+</span></span><span class="line"><span class="ln">32</span><span class="cl">        <span class="n">LogManagerSendLog</span><span class="p">(</span><span class="n">PsGetCurrentProcessId</span><span class="p">(),</span> <span class="n">PsGetCurrentThreadId</span><span class="p">(),</span> <span class="sa">L</span><span class="s">&#34;NtCreateThreadEx&#34;</span><span class="p">,</span> <span class="sa">L</span><span class="s">&#34;RemoteThread&#34;</span><span class="p">,</span> <span class="n">status</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="n">params</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">33</span><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="ln">34</span><span class="cl">    <span class="k">else</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">35</span><span class="cl">        <span class="cp">#define THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER 0x4
+</span></span></span><span class="line"><span class="ln">36</span><span class="cl"><span class="cp"></span>        <span class="k">if</span><span class="p">(</span><span class="n">CreateFlags</span> <span class="o">==</span> <span class="n">THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">37</span><span class="cl">            <span class="n">LogManagerSendLog</span><span class="p">(</span><span class="n">PsGetCurrentProcessId</span><span class="p">(),</span> <span class="n">PsGetCurrentThreadId</span><span class="p">(),</span> <span class="sa">L</span><span class="s">&#34;NtCreateThreadEx&#34;</span><span class="p">,</span> <span class="sa">L</span><span class="s">&#34;DetectDebugger&#34;</span><span class="p">,</span> <span class="n">status</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">38</span><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="ln">39</span><span class="cl">    <span class="n">InterlockedDecrement</span><span class="p">(</span><span class="o">&amp;</span><span class="n">gHooksActive</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">40</span><span class="cl">	<span class="k">return</span> <span class="n">status</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">41</span><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>普通的<code>ETW Hook</code>是全局的Hook，即所有的应用态系统调用都会被我们接管。因此还需要维护一个<code>ProcessList</code>记录样本的PID；对于跨进程的操作，比如有的样本注入<code>shellcode</code>至白进程，或者释放了新进程并拉起，则需要将新进程的PID也加入到<code>ProcessList</code>中，避免遗漏行为。上文中的<code>LogManagerSetTargetProcess</code>正是在做这件事。</p>
+<h2 id="沙箱拓展堆栈检测">沙箱拓展：堆栈检测<a hidden class="anchor" aria-hidden="true" href="#沙箱拓展堆栈检测">#</a></h2>
+<p>上文中提到的<code>Hell's Gate</code>指的是一种构造<code>gadget</code>直接调用<code>syscall</code>指令进入内核的手法，能够做到规避3环的挂钩。但这样做导致其堆栈不正常，呈现出<code>malware.exe -&gt; ntoskrnl.exe</code>这样的调用链，因此我们可以在Hook开头加一个堆栈检测，检测其返回地址（存放在<code>TrapFrame</code>中）是否位于正常的模块（如<code>ntdll.dll</code>），否则判为一次恶意调用。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="c1">// 直接系统调用检测(SYSCALL)
+</span></span></span><span class="line"><span class="ln"> 2</span><span class="cl"><span class="c1"></span><span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">MODULE_NUM</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 3</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="n">rip</span> <span class="o">&gt;=</span> <span class="n">g_UserModule</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">BaseAddress</span>
+</span></span><span class="line"><span class="ln"> 4</span><span class="cl">		<span class="o">&amp;&amp;</span> <span class="n">rip</span> <span class="o">&lt;=</span> <span class="p">(</span><span class="n">ULONG64</span><span class="p">)</span><span class="n">g_UserModule</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">BaseAddress</span> <span class="o">+</span> <span class="n">g_UserModule</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">Size</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln"> 5</span><span class="cl">	<span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 6</span><span class="cl">		<span class="n">abnormalSyscall</span> <span class="o">=</span> <span class="n">FALSE</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 7</span><span class="cl">		<span class="c1">// ntdll.dll需特殊判定，对抗间接系统调用 - 检测点1
+</span></span></span><span class="line"><span class="ln"> 8</span><span class="cl"><span class="c1"></span>		<span class="n">UNICODE_STRING</span> <span class="n">tmp</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln"> 9</span><span class="cl">		<span class="n">RtlInitUnicodeString</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">,</span> <span class="sa">L</span><span class="s">&#34;ntdll.dll&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">10</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">RtlCompareUnicodeString</span><span class="p">(</span><span class="o">&amp;</span><span class="n">g_UserModule</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">ModuleName</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">tmp</span><span class="p">,</span> <span class="n">TRUE</span><span class="p">))</span>
+</span></span><span class="line"><span class="ln">11</span><span class="cl">			<span class="n">abnormalSyscall</span> <span class="o">=</span> <span class="n">SpecialDetectSyscall</span><span class="p">(</span><span class="n">rip</span><span class="p">,</span> <span class="n">systemCallIndex</span><span class="p">,</span> <span class="n">TRUE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">12</span><span class="cl">		<span class="k">goto</span> <span class="n">log</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">13</span><span class="cl">
+</span></span><span class="line"><span class="ln">14</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">15</span><span class="cl"><span class="nl">log</span><span class="p">:</span>
+</span></span><span class="line"><span class="ln">16</span><span class="cl">
+</span></span><span class="line"><span class="ln">17</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="n">abnormalSyscall</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">18</span><span class="cl">		<span class="n">SYSCALL_PARAMETER</span> <span class="n">params</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span>
+</span></span><span class="line"><span class="ln">19</span><span class="cl">		<span class="n">params</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="n">Type</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">20</span><span class="cl">		<span class="n">RtlStringCchCopyW</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="n">Name</span><span class="p">,</span> <span class="n">ARRAYSIZE</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="n">Name</span><span class="p">),</span> <span class="sa">L</span><span class="s">&#34;name&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">21</span><span class="cl">		<span class="n">RtlStringCchCopyW</span><span class="p">((</span><span class="n">WCHAR</span><span class="o">*</span><span class="p">)</span><span class="n">params</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="n">Data</span><span class="p">,</span> <span class="n">ARRAYSIZE</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="n">Data</span><span class="p">)</span> <span class="o">/</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">WCHAR</span><span class="p">),</span> <span class="n">g_SyscallTable</span><span class="p">[</span><span class="n">systemCallIndex</span><span class="p">].</span><span class="n">Name</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">22</span><span class="cl">		<span class="n">params</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="n">Size</span> <span class="o">=</span> <span class="p">(</span><span class="n">ULONG</span><span class="p">)(</span><span class="n">wcslen</span><span class="p">(</span><span class="n">g_SyscallTable</span><span class="p">[</span><span class="n">systemCallIndex</span><span class="p">].</span><span class="n">Name</span><span class="p">)</span> <span class="o">*</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">WCHAR</span><span class="p">));</span>
+</span></span><span class="line"><span class="ln">23</span><span class="cl">		<span class="n">LogManagerSendLog</span><span class="p">(</span><span class="n">PsGetCurrentProcessId</span><span class="p">(),</span> <span class="n">PsGetCurrentThreadId</span><span class="p">(),</span> <span class="sa">L</span><span class="s">&#34;Syscall&#34;</span><span class="p">,</span> <span class="sa">L</span><span class="s">&#34;Abnormal Syscall&#34;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">params</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">24</span><span class="cl">	<span class="p">}</span>
+</span></span></code></pre></div><p>从对抗的层面来讲这种检测是有欠缺的，因为现在武器化的<code>SYSCALL</code>通常是间接系统调用，调用链通常为<code>malware.exe -&gt; ntdll.dll -&gt; ntoskrnl.exe</code>，或者更加合法的<code>malware.exe -&gt; kernel32.dll -&gt; ntdll.dll -&gt; ntoskrnl.exe</code> ；更高级别的检测就是检测跳转处是否为正常的<code>CALL</code>，还是恶意软件自己维护的跳板。</p>
+<p>堆栈数据是EDR内存扫描的一个重要指标，但对于沙箱来说，跑出更多的行为才是最重要的，因此这里就不展开讨论了。</p>
+<h2 id="演示">演示<a hidden class="anchor" aria-hidden="true" href="#演示">#</a></h2>
+<p>演示的样本为某厂攻击队的样本，采用了间接系统调用的API执行手段，普通的3环Hook无法捕捉到调用</p>
+<p><img alt="image-20250914173155589" loading="lazy" src="https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/image-20250914173155589.png"></p>
+<p>我仅实现了自动化拉起样本、传递调用数据等功能；更进一步地，可以考虑实现自动化重启虚拟机、分析调用数据并打行为标签、自动提取C2（可以通过网络过滤驱动实现）。</p>
+<h2 id="参考文章及项目">参考文章及项目<a hidden class="anchor" aria-hidden="true" href="#参考文章及项目">#</a></h2>
+<p>[1] [<a href="https://bbs.kanxue.com/thread-281479.htm">原创]InfinityHook 可兼容最新版windows-软件逆向-看雪论坛-安全社区|非营利性质技术交流社区</a></p>
+<p>[2]  <a href="https://revers.engineering/fun-with-pg-compliant-hook/">《Fun with another PatchGuard-compliant Hook - Reverse Engineering》 &mdash; Fun with another PatchGuard-compliant Hook - Reverse Engineering</a></p>
+<p>[3] <a href="https://github.com/zhutingxf/InfinityHookPro">https://github.com/zhutingxf/InfinityHookPro</a></p>
+<p>[4] <a href="https://bbs.kanxue.com/elink@610K9s2c8@1M7s2y4Q4x3@1q4Q4x3V1k6Q4x3V1k6Y4K9i4c8Z5N6h3u0Q4x3X3g2U0L8$3#2Q4x3V1k6a6P5s2W2Y4k6h3%5E5I4j5e0q4Q4x3V1k6u0L8X3k6A6L8X3W2@1P5f1S2G2L8$3E0Q4y4h3k6D9j5i4c8W2M7K7%60.">https://github.com/Oxygen1a1/InfinityHook_latest</a></p>
+
+
+  </div>
+
+  <footer class="post-footer">
+    <ul class="post-tags">
+      <li><a href="https://ybliangcha.github.io/tags/kernel/">Kernel</a></li>
+      <li><a href="https://ybliangcha.github.io/tags/sandbox/">Sandbox</a></li>
+    </ul>
+<nav class="paginav">
+  <a class="next" href="https://ybliangcha.github.io/posts/pte-hook-analysis/">
+    <span class="title">下一页 »</span>
+    <br>
+    <span>PTE Hook原理浅析</span>
+  </a>
+</nav>
+
+  </footer>
+</article>
+    </main>
+    
+<footer class="footer">
+        <span><a href="https://ybliangcha.github.io/">©2025 Loft&rsquo;s Blog</a></span> · 
+
+    <span>
+        Powered by
+        <a href="https://gohugo.io/" rel="noopener noreferrer" target="_blank">Hugo</a> &
+        <a href="https://github.com/adityatelange/hugo-PaperMod/" rel="noopener" target="_blank">PaperMod</a>
+    </span>
+</footer>
+<a href="#top" aria-label="go to top" title="Go to Top (Alt + G)" class="top-link" id="top-link" accesskey="g">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 6" fill="currentColor">
+        <path d="M12 6H0l6-6z" />
+    </svg>
+</a>
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/medium-zoom/1.1.0/medium-zoom.min.js"
+  integrity="sha512-9ZKhgaFdKlsELap/dGw3Iaz5Bj+Las0XXZiRKYZaN9QArg6FtkD5rULNmNH4rTCTFxjPiBGr3MX8smRADRorDA=="
+  crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+<script>
+  var OSName = "unknown";
+  var navApp = navigator.userAgent.toLowerCase();
+  switch (true) {
+    case (navApp.indexOf("win") != -1):
+      OSName = "windows";
+      break;
+    case (navApp.indexOf("mac") != -1):
+      OSName = "apple";
+      break;
+    case (navApp.indexOf("linux") != -1):
+      OSName = "linux";
+      break;
+    case (navApp.indexOf("x11") != -1):
+      OSName = "unix";
+      break;
+  }
+
+  const images = Array.from(document.querySelectorAll(".post-content img"));
+  images.forEach(img => {
+    mediumZoom(img, {
+      margin: 1,    
+      
+      container: null,  
+      template: null,  
+      
+    });
+  });
+
+  if (OSName == "windows") {
+    document.body.className += ' win11'
+  }
+</script>
+
+
+<script>
+    let menu = document.getElementById('menu')
+    if (menu) {
+        menu.scrollLeft = localStorage.getItem("menu-scroll-position");
+        menu.onscroll = function () {
+            localStorage.setItem("menu-scroll-position", menu.scrollLeft);
+        }
+    }
+
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener("click", function (e) {
+            e.preventDefault();
+            var id = this.getAttribute("href").substr(1);
+            if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                document.querySelector(`[id='${decodeURIComponent(id)}']`).scrollIntoView({
+                    behavior: "smooth"
+                });
+            } else {
+                document.querySelector(`[id='${decodeURIComponent(id)}']`).scrollIntoView();
+            }
+            if (id === "top") {
+                history.replaceState(null, null, " ");
+            } else {
+                history.pushState(null, null, `#${id}`);
+            }
+        });
+    });
+
+</script>
+<script>
+    var mybutton = document.getElementById("top-link");
+    window.onscroll = function () {
+        if (document.body.scrollTop > 800 || document.documentElement.scrollTop > 800) {
+            mybutton.style.visibility = "visible";
+            mybutton.style.opacity = "1";
+        } else {
+            mybutton.style.visibility = "hidden";
+            mybutton.style.opacity = "0";
+        }
+    };
+
+</script>
+<script>
+    document.getElementById("theme-toggle").addEventListener("click", () => {
+        if (document.body.className.includes("dark")) {
+            document.body.classList.remove('dark');
+            localStorage.setItem("pref-theme", 'light');
+        } else {
+            document.body.classList.add('dark');
+            localStorage.setItem("pref-theme", 'dark');
+        }
+    })
+
+</script>
+<script>
+    document.querySelectorAll('pre > code').forEach((codeblock) => {
+        const container = codeblock.parentNode.parentNode;
+
+        const copybutton = document.createElement('button');
+        copybutton.classList.add('copy-code');
+        copybutton.innerHTML = '复制';
+
+        function copyingDone() {
+            copybutton.innerHTML = '已复制！';
+            setTimeout(() => {
+                copybutton.innerHTML = '复制';
+            }, 2000);
+        }
+
+        copybutton.addEventListener('click', (cb) => {
+            if ('clipboard' in navigator) {
+                navigator.clipboard.writeText(codeblock.textContent);
+                copyingDone();
+                return;
+            }
+
+            const range = document.createRange();
+            range.selectNodeContents(codeblock);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            try {
+                document.execCommand('copy');
+                copyingDone();
+            } catch (e) { };
+            selection.removeRange(range);
+        });
+
+        if (container.classList.contains("highlight")) {
+            container.appendChild(copybutton);
+        } else if (container.parentNode.firstChild == container) {
+            
+        } else if (codeblock.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName == "TABLE") {
+            
+            codeblock.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(copybutton);
+        } else {
+            
+            codeblock.parentNode.appendChild(copybutton);
+        }
+    });
+</script>
+</body>
+
+</html>

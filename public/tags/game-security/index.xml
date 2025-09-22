@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
   <channel>
-    <title>Posts on Loft&#39;s Blog</title>
-    <link>https://ybliangcha.github.io/posts/</link>
-    <description>Recent content in Posts on Loft&#39;s Blog</description>
+    <title>Game Security on Loft&#39;s Blog</title>
+    <link>https://ybliangcha.github.io/tags/game-security/</link>
+    <description>Recent content in Game Security on Loft&#39;s Blog</description>
     <image>
       <title>Loft&#39;s Blog</title>
       <url>https://i.postimg.cc/7hwBy7VS/calcr.png</url>
@@ -12,16 +12,8 @@
     <generator>Hugo -- 0.148.2</generator>
     <language>zh</language>
     <copyright>©2025 Loft&amp;rsquo;s Blog</copyright>
-    <lastBuildDate>Sat, 14 Sep 2024 01:12:53 +0800</lastBuildDate>
-    <atom:link href="https://ybliangcha.github.io/posts/index.xml" rel="self" type="application/rss+xml" />
-    <item>
-      <title>基于ETW Hook的自动化恶意代码分析沙箱设计</title>
-      <link>https://ybliangcha.github.io/posts/etw-hook-based-system-sandbox/</link>
-      <pubDate>Sat, 14 Sep 2024 01:12:53 +0800</pubDate>
-      <guid>https://ybliangcha.github.io/posts/etw-hook-based-system-sandbox/</guid>
-      <description>&lt;h2 id=&#34;前言&#34;&gt;前言&lt;/h2&gt;
-&lt;p&gt;本文中的沙箱，均指一个受控、虚拟化的环境，专门用来自动运行、监控和分析可疑程序的行为。传统的沙箱根据监控、收集恶意软件行为的方式，可以分为两种模式：一种是基于&lt;strong&gt;API Hook&lt;/strong&gt;的沙箱，如Cuckoo；一种是基于虚拟化技术(VT-x with EPT)的沙箱，如DrakVuf。&lt;/p&gt;</description>
-    </item>
+    <lastBuildDate>Fri, 16 Aug 2024 01:12:53 +0800</lastBuildDate>
+    <atom:link href="https://ybliangcha.github.io/tags/game-security/index.xml" rel="self" type="application/rss+xml" />
     <item>
       <title>PTE Hook原理浅析</title>
       <link>https://ybliangcha.github.io/posts/pte-hook-analysis/</link>

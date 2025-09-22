@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="zh" dir="auto">
+
+<head><meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="robots" content="index, follow">
+<title>PTE Hook原理浅析 | Loft&#39;s Blog</title>
+<meta name="keywords" content="kernel, game security">
+<meta name="description" content="什么是PTE Hook
+常规的inlineHook思路是直接修改目标函数的代码，使其先执行我们自己的函数，再跳转回来执行原函数。这种Hook是全局的，即Windows中每一个进程一旦调用被Hook的函数，就会受到我们的影响，也很容易被PatchGuard检查到。">
+<meta name="author" content="Loft">
+<link rel="canonical" href="https://ybliangcha.github.io/posts/pte-hook-analysis/">
+<link crossorigin="anonymous" href="/assets/css/stylesheet.36819bea596090d8b48cf10d9831382996197aa7e4fc86f792f7c08c9ca4d23b.css" integrity="sha256-NoGb6llgkNi0jPENmDE4KZYZeqfk/Ib3kvfAjJyk0js=" rel="preload stylesheet" as="style">
+<link rel="icon" href="https://ybliangcha.github.io/favicon.png">
+<link rel="icon" type="image/png" sizes="16x16" href="https://ybliangcha.github.io/favicon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="https://ybliangcha.github.io/favicon.png">
+<link rel="apple-touch-icon" href="https://ybliangcha.github.io/favicon.png">
+<link rel="mask-icon" href="https://ybliangcha.github.io/favicon.png">
+<meta name="theme-color" content="#2e2e33">
+<meta name="msapplication-TileColor" content="#2e2e33">
+<link rel="alternate" hreflang="zh" href="https://ybliangcha.github.io/posts/pte-hook-analysis/">
+<noscript>
+    <style>
+        #theme-toggle,
+        .top-link {
+            display: none;
+        }
+
+    </style>
+</noscript><link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap" rel="stylesheet">
+<script type="text/javascript"
+        async
+        src="https://cdn.bootcss.com/mathjax/2.7.3/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+MathJax.Hub.Config({
+  tex2jax: {
+    inlineMath: [['$','$'], ['\\(','\\)']],
+    displayMath: [['$$','$$'], ['\[\[','\]\]']],
+    processEscapes: true,
+    processEnvironments: true,
+    skipTags: ['script', 'noscript', 'style', 'textarea', 'pre'],
+    TeX: { equationNumbers: { autoNumber: "AMS" },
+         extensions: ["AMSmath.js", "AMSsymbols.js"] }
+  }
+});
+
+MathJax.Hub.Queue(function() {
+    
+    
+    
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i = 0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});
+</script>
+
+<style>
+code.has-jax {
+    font: inherit;
+    font-size: 100%;
+    background: inherit;
+    border: inherit;
+    color: #515151;
+}
+</style>
+<meta property="og:url" content="https://ybliangcha.github.io/posts/pte-hook-analysis/">
+  <meta property="og:site_name" content="Loft&#39;s Blog">
+  <meta property="og:title" content="PTE Hook原理浅析">
+  <meta property="og:description" content="什么是PTE Hook 常规的inlineHook思路是直接修改目标函数的代码，使其先执行我们自己的函数，再跳转回来执行原函数。这种Hook是全局的，即Windows中每一个进程一旦调用被Hook的函数，就会受到我们的影响，也很容易被PatchGuard检查到。">
+  <meta property="og:locale" content="zh">
+  <meta property="og:type" content="article">
+    <meta property="article:section" content="posts">
+    <meta property="article:published_time" content="2024-08-16T01:12:53+08:00">
+    <meta property="article:modified_time" content="2024-08-16T01:12:53+08:00">
+    <meta property="article:tag" content="Kernel">
+    <meta property="article:tag" content="Game Security">
+      <meta property="og:image" content="https://i.postimg.cc/7hwBy7VS/calcr.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://i.postimg.cc/7hwBy7VS/calcr.png">
+<meta name="twitter:title" content="PTE Hook原理浅析">
+<meta name="twitter:description" content="什么是PTE Hook
+常规的inlineHook思路是直接修改目标函数的代码，使其先执行我们自己的函数，再跳转回来执行原函数。这种Hook是全局的，即Windows中每一个进程一旦调用被Hook的函数，就会受到我们的影响，也很容易被PatchGuard检查到。">
+
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position":  1 ,
+      "name": "Posts",
+      "item": "https://ybliangcha.github.io/posts/"
+    }, 
+    {
+      "@type": "ListItem",
+      "position":  2 ,
+      "name": "PTE Hook原理浅析",
+      "item": "https://ybliangcha.github.io/posts/pte-hook-analysis/"
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "PTE Hook原理浅析",
+  "name": "PTE Hook原理浅析",
+  "description": "什么是PTE Hook 常规的inlineHook思路是直接修改目标函数的代码，使其先执行我们自己的函数，再跳转回来执行原函数。这种Hook是全局的，即Windows中每一个进程一旦调用被Hook的函数，就会受到我们的影响，也很容易被PatchGuard检查到。\n",
+  "keywords": [
+    "kernel", "game security"
+  ],
+  "articleBody": "什么是PTE Hook 常规的inlineHook思路是直接修改目标函数的代码，使其先执行我们自己的函数，再跳转回来执行原函数。这种Hook是全局的，即Windows中每一个进程一旦调用被Hook的函数，就会受到我们的影响，也很容易被PatchGuard检查到。\n因此提出一种新的Hook思路，隔离具体进程的四级页表，使我们的Hook不影响全局。当然具体的Hook方法依然是inlineHook\n理论知识 CPU访问物理地址 首先解释一下x64架构下，CPU访问一个虚拟地址（也称线性地址）时的流程。Windows使用了四级页表结构，分别是PML4 (Page Map Level 4)、PDPT (Page Directory Pointer Table)、PD (Page Directory)、PT (Page Table)。我们知道一个虚拟地址共64位，其中高16位是不使用的，因此总共只有48位，这48位按照9-9-9-9-12的结构拆分，前四个9表示四级页表的索引，最后一个12表示一个物理页（通常是4K）的页内偏移，这样CPU就找到了一个虚拟地址对应的物理地址。下面演示一个虚拟地址是如何拆分的。\n1比如这样一个虚拟地址 : 0xfffff8037888e000 2高16位不使用，可以看到全部被置为了1，因此有效地址为 ： 0xf8037888e000 3转为二进制： 1111 1000 0000 0011 0111 1000 1000 1000 1110 0000 0000 0000 4第一个9位: 1 1111 0000 -\u003e 0x1f0 PML4 Index 5第二个9位: 0 0000 1101 -\u003e 0xd\tPDPT Index 6第三个9位: 1 1100 0100 -\u003e 0x1c4\tPT Index 7第四个9位: 0 1000 1110 -\u003e 0x8e\tPD Index 8最后12位页内偏移: 00 0000 0000 -\u003e 0\tOffset CR3寄存器是x64架构下一个重要的系统寄存器，其中存储的值是当前进程PML4表的物理基地址，之前已经计算出Index，因此通过CR3拿到基地址后，可以逐层的索引到物理地址。\n页表自映射 根据上面讲的，我们明白CPU是这样找到物理地址的：PML4-\u003ePDPT-\u003ePD-\u003ePT-\u003ePhysical Page，共有4次访问内存。由于CPU寻址是一个高频操作，为了简化这一流程，Windows引入了一个很精妙的机制：页表自映射。\n页表自映射，即在PML4这张表的其中一项中，存储PML4表基地址。比如假设在索引0x100处存储：\n因此，在访问PML4索引0x100处，其实就是在访问PML4自身，所以被称为页表自映射。\n你可能会想，这么做白白浪费了8字节空间，为什么要设置一个这样的页表项，他的精妙之处是这样的：\n我们先从PML4入手，我们知道一个48位有效地址的高9位是PML4的索引，这个索引对应的页表项存储的本应该是下一级页表，即PDPT的物理基地址，但是由于引入了页表自映射，因此就必然有一个索引对应的页表项存储的是PML4自身的基地址，不妨将这一索引设为S（在上图中这个索引是0x100）。\n我们先采用这样的格式表示一个48位的虚拟地址(A)(B)(C)(D)(Offset)，其中A是PML4的索引\n当 A == B == C == D == S \u0026\u0026 Offset == 0 时，CPU访问这个虚拟地址时会出现这样的寻址情况：\nPML4 Index == S，指向PML4表物理基地址，PDPT Index == S ，又指向PML4表物理基地址，以此类推，PD和PT也都指向PML4表物理基地址。因此(S)(S)(S)(S)(000000000000)对应的物理地址就是PML4表的物理基地址，不妨把这个虚拟地址称作PML4的表虚拟基地址。用数学公式将之表达：\n1PML4_VirtualBase = (S \u003c\u003c 39) | (S \u003c\u003c 30) | (S \u003c\u003c 21) | (S \u003c\u003c 12) 2//S \u003c\u003c 39 就是将一串48位的二进制数的高9位设为S，或运算就是将每次设置的值连起来放在一个数上 3//假设 S \u003c\u003c 39 == 0xF6E0000000000000 S \u003c\u003c 30 == 0x0000074000000000 4//那么 (S \u003c\u003c 39) | (S \u003c\u003c 30) == 0xF6E0074000000000 根据上面的理论，显然当A == B == C == S \u0026\u0026 D == PDPT_Index \u0026\u0026 Offset == 0时，也就是说其中一位指向了PDPT的基地址，可以得到PDPT的表虚拟基地址\n1PDPT_VirtualBase = (S \u003c\u003c 39) | (S \u003c\u003c 30) | (S \u003c\u003c 21) | (PDPT_Index \u003c\u003c 12) 以此类推，我们就可以得到计算最低一级的页表PT的表虚拟基地址的计算公式，这里顺便展示PD的计算公式：\n1PT_VirtualBase = (S \u003c\u003c 39) | (PDPT_Index \u003c\u003c 30) | (PD_Index \u003c\u003c 21) | (PT_Index \u003c\u003c 12) 2PD_VirtualBase = (S \u003c\u003c 39) | (S \u003c\u003c 30) | (PDPT_Index) | (PD_Index \u003c\u003c 12) 以上是利用页表自映射机制定位到PT表基地址，实际上也可以利用这个原理定位到任意一个VA（虚拟地址）对应的PTE（Page Table Entry，即PT条目，也即PT表中的一项）。\n显然以下公式成立：\n1PTE_VirtualAddress = (S \u003c\u003c 39) | (PML4_Index \u003c\u003c 30) | (PDPT_Index \u003c\u003c 21) | (PD_Index \u003c\u003c 12) | (PT_Index \u003c\u003c 3) 2/* 3理解最后的(PT_Index \u003c\u003c 3)的这一项，因为每个PTE占8字节，左移3位即乘8，也理解为i*8作为偏移来找到具体的 4的PTE，实际上就是通过自映射机制将PT表当作了原来的物理页面进行查找 5*/ 通过我们构造出的这个虚拟地址，可以直接读写PTE而不需要知道其物理地址。\n最后再将一个很简洁的通过PML4的表虚拟基地址得到其他三级页表虚拟基地址的公式，我们知道：\n1PML4_VirtualBase = (S \u003c\u003c 39) | (S \u003c\u003c 30) | (S \u003c\u003c 21) | (S \u003c\u003c 12) 如果将后两个S置为0，即不考虑偏移且往后找一级页表，就可以得到PDPT的表虚拟基地址\n1PDPT_VirtualBase = (S \u003c\u003c 39) | (S \u003c\u003c 30) | (0 \u003c\u003c 21) | (0 \u003c\u003c 12) 数学上，上面这个式子实际上等价于PML4的虚拟基地址的低21位置0，即\n1PDPT_VirtualBase = (PML4_VirtualBase \u003e\u003e 21) \u003c\u003c 21 同理：\n1PD_VirtualBase = (PML4_VirtualBase \u003e\u003e 30) \u003c\u003c 30 2PT_VirtualBase = (PML4_VirtualBase \u003e\u003e 39) \u003c\u003c 39 另外，由于上面计算VA对应的PTE公式过于复杂，是主动构造了9-9-9-9-12的虚拟地址结构，还有一个通过基地址+偏移的方法来计算：\n1PTE_VirtualAddress = PTE_Base + (VA \u003e\u003e 12) \u003c\u003c 3 2/* 3VA \u003e\u003e 12 其实就是 VA / 4096，我们知道一个页就是4096K，所以VA \u003e\u003e 12 就是虚拟页号，每一页对应一个PTE， 4一个PTE是8字节，那么上式就变成了： 5*/ 6PTE_VirtualAddress = PTE_Base + Offset * 8 由于Windows开启了基址随机化，页表的虚拟基地址每次开机都不一样，因此需要一个巧妙的方法定位页表基地址，这里给出鹅厂的方法：利用页表自映射定位。由于存在页表自映射这一机制，因此，在PML4表的512个地址中，必然有一个存放着PML4的表物理地址，即CR3的值。所以可以通过映射CR3物理地址的虚拟地址，遍历这个地址页面的512个地址，哪个地址等于CR3的值，哪个地址就是PML4的表虚拟基地址。考虑以下算法：\n1ULONG64 GetPml4Base() 2{ 3\tPHYSICAL_ADDRESS pCr3 = { 0 }; 4\tpCr3.QuadPart = __readcr3(); 5\tPULONG64 pCmpArr = (PULONG64)MmGetVirtualForPhysical(pCr3); 6 7\tint count = 0; 8\t/* 9\t*pCmpArr（当前条目，即PML4E的值）表示指向下一级页表的物理地址 10\t\u00260xFFFFFFFFF000即获取Page_Frame_Number 页帧号 11\t*/ 12\twhile ((*pCmpArr \u0026 0xFFFFFFFFF000) != pCr3.QuadPart) 13\t{ 14\tif (++count \u003e= 512) 15\t{ 16\treturn -1; 17\t} 18\tpCmpArr++; 19\t} 20 21\treturn (ULONG64)pCmpArr \u0026 0xFFFFFFFFFFFFF000;//忽略后12位标志位 22} 理论知识就到这里了。\nPTE Hook原理 首先思考一个问题，为什么常规Hook只是修改了一个进程的内核函数，却导致全局的内核函数被修改而被PG检查到。这是因为，用户态下的进程对应的PML4表的高256项都是相同的，指向了共享的内核PDPT，一旦我们修改任意一项PTE，就会产生连锁的影响PT-\u003ePD-\u003ePDPT-\u003ePML4，又由于PML4是共享的，所以全局的函数都被修改了。\n因此我们可以先替换掉一项PML4E，这一项PML4E被我们替换后，指向一个伪造的PDPT表，再指向一个伪造的PD表，一个伪造的PT表，最后指向我们Hook的函数。这样被修改的函数只局限于这一个进程，在一定程度上可以规避PG。\n此外，还需要考虑大小页的问题。小页指的就是一般的4K大小的页，大页指的是2M的页，是操作系统为了提高访问内存性能而开发的。根据上面的伪造替换规则，一般来说会想到：大页换大页，小页换小页。但是由于页表的物理内存必然是连续的，而Windows的物理内存机制是碎片化的，开机越久越难申请到2M的连续内存，所以考虑使用页表分割的方法，即将一个2M的大页分成512个小页。在如下的代码中，我们只申请了一页连续的内存，用来存放指向512个小页的PTE，每个都用来指向原大页的不同4K部分。\n实战 页表分割：\n1bool splitLargePages(pde_64* in_pde, pde_64* out_pde) 2{ 3\tPHYSICAL_ADDRESS MaxAddrPa{ 0 }, LowAddrPa{ 0 }; 4\tMaxAddrPa.QuadPart = MAXULONG64; 5\tLowAddrPa.QuadPart = 0; 6\tpt_entry_64* Pt; 7\tauto start_pfn = in_pde-\u003epage_frame_number; 8\tPt = (pt_entry_64*)MmAllocateContiguousMemorySpecifyCache(PAGE_SIZE, LowAddrPa, MaxAddrPa, LowAddrPa, MmCached);//默认对齐 9\tif (!Pt) { 10\tDbgPrintEx(77, 0, \"failed to alloc contiguous for new pt.\\r\\n\"); 11\treturn false; 12\t} 13\tfor (int i = 0; i \u003c 512; i++) { 14\t//分割成小页，构建Pt 15\tPt[i].flags = in_pde-\u003eflags; 16\tPt[i].large_page = 0; 17\tPt[i].global = 0; 18\tPt[i].page_frame_number = start_pfn + i; 19\t} 20\tout_pde-\u003eflags = in_pde-\u003eflags; 21\tout_pde-\u003elarge_page = 0; 22\tout_pde-\u003epage_frame_number = va_to_pa(Pt) / PAGE_SIZE; 23\treturn true; 24} 下面是页表伪造部分的代码：\n1typedef struct _PTE_TABLE { 2 void* LineAddress; 3 pte_64* PteAddress; 4 pde_64* PdeAddress; 5 pdpte_64* PdpteAddress; 6 pml4e_64* Pml4eAddress; 7}PTE_TABLE, * PPTE_TABLE; 1bool isolationPageTable(cr3 cr3_reg, void* replaceAlignAddr, pde_64* splitPDE) 2{ 3\t//均指向4kb内存 4\tuint64_t* VaPt, * Va4kb, * VaPdt, * VaPdpt, * VaPml4t; 5 6\tPTE_TABLE Table{ 0 }; 7\tPHYSICAL_ADDRESS MaxAddrPa{ 0 }, LowAddrPa{ 0 }; 8\tMaxAddrPa.QuadPart = MAXULONG64; 9\tLowAddrPa.QuadPart = 0; 10\t//这里申请伪造页表的内存 11\tVaPt = (uint64_t*)MmAllocateContiguousMemorySpecifyCache(PAGE_SIZE, LowAddrPa, MaxAddrPa, LowAddrPa, MmCached); 12\tVa4kb = (uint64_t*)MmAllocateContiguousMemorySpecifyCache(PAGE_SIZE, LowAddrPa, MaxAddrPa, LowAddrPa, MmCached); 13\tVaPdt = (uint64_t*)MmAllocateContiguousMemorySpecifyCache(PAGE_SIZE, LowAddrPa, MaxAddrPa, LowAddrPa, MmCached); 14\tVaPdpt = (uint64_t*)MmAllocateContiguousMemorySpecifyCache(PAGE_SIZE, LowAddrPa, MaxAddrPa, LowAddrPa, MmCached); 15\tVaPml4t = (uint64_t*)pa_to_va(cr3_reg.address_of_page_directory * PAGE_SIZE); 16 17\tif (!VaPt || !Va4kb || !VaPdt || !VaPdpt) { 18\tDbgPrintEx(77, 0, \"failed to alloc page table entry.\\r\\n\"); 19\treturn false; 20\t} 21\tTable.LineAddress = replaceAlignAddr; 22\tgetPagesTable(Table);//这个函数是利用理论知识讲的公式获取任意VA对应的PTE、PDPTE、PDE、PXE 23 24\t//获取索引 25\tUINT64 pml4eindex = ((uint64_t)replaceAlignAddr \u0026 0x0000FF8000000000) \u003e\u003e 39; 26\tUINT64 pdpteindex = ((uint64_t)replaceAlignAddr \u0026 0x0000007FC0000000) \u003e\u003e 30; 27\tUINT64 pdeindex = ((uint64_t)replaceAlignAddr \u0026 0x000000003FE00000) \u003e\u003e 21; 28\tUINT64 pteindex = ((uint64_t)replaceAlignAddr \u0026 0x00000000001FF000) \u003e\u003e 12; 29 30\t//判断是否为大页，因为大页的PT是没有值的，所以要将VaPt指向分割成小页后的PT表，就是上面代码展示的 31\tif (Table.PdeAddress-\u003elarge_page) { 32\tMmFreeContiguousMemorySpecifyCache(VaPt, PAGE_SIZE, MmCached); 33\tVaPt = (uint64_t*)pa_to_va(splitPDE-\u003epage_frame_number * PAGE_SIZE); 34\t} 35\telse { 36\t//小页，Pt数组是有值的，先复制 37\tmemcpy(VaPt, Table.PteAddress - pteindex, PAGE_SIZE); 38\t} 39 //这里我的Table结构中的页表均为指针，因此这里做的减法是指针减法，不需要乘以8 40 //另外这里做减法的意思是获取页表的起始地址，即基地址 41\tmemcpy(Va4kb, replaceAlignAddr, PAGE_SIZE); 42\tmemcpy(VaPdt, Table.PdeAddress - pdeindex, PAGE_SIZE);//指针减法 43\tmemcpy(VaPdpt, Table.PdpteAddress - pdpteindex, PAGE_SIZE); 44 45\t//替换页表的页框号，从Pte开始一直到Pml4e 46\t_disable();//关中断防止替换被打断 47\tauto pReplacePte = (pte_64*)\u0026VaPt[pteindex]; 48\tpReplacePte-\u003epage_frame_number = va_to_pa(Va4kb) / PAGE_SIZE; 49\tauto pReplacePde = (pde_64*)\u0026VaPdt[pdeindex]; 50\tpReplacePde-\u003epage_frame_number = va_to_pa(VaPt) / PAGE_SIZE; 51\tpReplacePde-\u003elarge_page = 0; 52\tpReplacePde-\u003eignored_1 = 0; 53\tpReplacePde-\u003epage_level_cache_disable = 1; 54\tauto pReplacePdpte = (pdpte_64*)\u0026VaPdpt[pdpteindex]; 55\tpReplacePdpte-\u003epage_frame_number = va_to_pa(VaPdt) / PAGE_SIZE; 56\tauto pReplacePml4e = (pml4e_64*)\u0026VaPml4t[pml4eindex]; 57\tpReplacePml4e-\u003epage_frame_number = va_to_pa(VaPdpt) / PAGE_SIZE; 58 59\t//刷新TLB 60\t__invlpg(pReplacePml4e); 61 62\t_enable(); 63\treturn true; 64 65} 最后写一段代码调用上面两个函数：\n1bool isolationPages(HANDLE pid, void* iso_address) 2{ 3\tif (!MmIsAddressValid(iso_address)) { 4\tDbgPrintEx(77, 0, \"Invalid address: %p\\r\\n\", iso_address); 5\treturn false; 6\t} 7 8\tPEPROCESS Process; 9\tKAPC_STATE Apc{ 0 }; 10\tNTSTATUS status; 11\tvoid* AliginIsoAddr; 12\tPTE_TABLE Table{ 0 }; 13\tstatus = PsLookupProcessByProcessId(pid, \u0026Process); 14\t//附加要隔离的进程，每个进程的空间是独立的，这一步一定要做 15\tKeStackAttachProcess(Process, \u0026Apc); 16\tAliginIsoAddr = PAGE_ALIGN(iso_address); 17\tTable.LineAddress = AliginIsoAddr; 18 19\tgetPagesTable(Table); 20 21\tbool bSuc = false; 22\twhile (1) { 23\t//大页分割 24\tpde_64 splitPDE{ 0 }; 25\tif (Table.PdeAddress-\u003elarge_page) { 26\tbSuc = splitLargePages(Table.PdeAddress, \u0026splitPDE); 27\tif (!bSuc)break; 28\tif (Table.PdeAddress-\u003eflags \u0026 0x100) { 29\tTable.PdeAddress-\u003eflags \u0026= ~0x100; 30 /* 31 这里以及下面的的Table.PteAddress-\u003eglobal = 0;是在关闭G位 32 */ 33\t} 34\t} 35\telse { 36\tif (Table.PteAddress-\u003eglobal) { 37\tTable.PteAddress-\u003eglobal = 0; 38\t} 39\t} 40 41\tcr3 Cr3; 42\tCr3.flags = __readcr3(); 43\tbSuc = isolationPageTable(Cr3, AliginIsoAddr, \u0026splitPDE); 44 45\tif (bSuc) { 46\tDbgPrintEx(77, 0, \"isolation succeed.\\r\\n\"); 47\tbreak; 48\t} 49\telse { 50\tDbgPrintEx(77, 0, \"failed to isolation pages.\\r\\n\"); 51\tbreak; 52\t} 53\t} 54\tKeUnstackDetachProcess(\u0026Apc); 55\tObDereferenceObject(Process); 56\treturn bSuc; 57} 这里有一步之前没讲的操作，设置了G位。在CPU的内部有一个表叫做TLB，学过计组的都知道，这玩意叫做快表，其实是一个Cache，内部记录了很多东西，比如直接记录一个虚拟地址对应的物理地址，而不需要通过四级页表机制来查找。每次切换进程时，CR3都会改变，而TLB是跟着CR3变的。但是由于操作系统的高位映射是基本不变的，如果每次切换CR3都重新维护一个TLB，就会造成很大开销。因此诞生了Global，即全局位。这个位一旦被置1，那么切换进程CR3的时候，就不会刷新PDE或PTE的G位为1的页。这将导致：进程A切换到进程B，而进程A的某个虚拟地址还是保存在进程B的TLB中，下次进程B查找这个虚拟地址的值后，就会在TLB中找到进程A虚拟地址中对应的物理地址。\n这对我们的隔离操作是有害的， 因为若进程A恰好是我们隔离的进程，我们Hook了某个函数后，其他进程又从TLB中找到了被Hook的这个函数，那么隔离就失效了。因此，我们关闭伪造页对应的PTE或PDE的G位，强制切换进程时刷新TLB，其他进程就找不到我们的Hook了。\n讲完上面的代码，PTE Hook的核心进程隔离部分已经实现了，接下来只需要使用inlineHook框架就好了。下面是一个例子：\n1bool PTEHookManager::PTEHook(HANDLE pid, void** oFuncAddr, void* targetFuncAddr) 2{ 3\tstatic bool bFirst = true; 4\tif (bFirst) { 5\tm_PTEBase = nullptr; 6\tm_trampLine = (char*)ExAllocatePoolWithTag(NonPagedPool, PAGE_SIZE * 5, 'Line'); 7\tif (!m_trampLine) { 8\tDbgPrintEx(77, 0, \"failed to create trampline.\\r\\n\"); 9\treturn false; 10\t} 11\tmemset(\u0026m_info, 0, sizeof(m_info)); 12\tmemset(\u0026m_globalBit, 0, sizeof(m_globalBit)); 13\tm_trampLineUsed = 0; 14\tbFirst = false; 15\t} 16\tPEPROCESS Process{ 0 }; 17\tKAPC_STATE Apc{ 0 }; 18\tNTSTATUS status; 19\tconst uint32_t breakBytesLeast = 14;//ff 25 20\tconst uint32_t trampLineBreakBytes = 20; 21\tuint32_t uBreakBytes = 0; 22\tchar* TrampLine = m_trampLine + m_trampLineUsed; 23\thde64s hde_info{ 0 }; 24\tchar* JmpAddrStart = (char*)*oFuncAddr; 25\tif (m_curHookCount == MAX_HOOK_COUNT) { 26\tDbgPrintEx(77, 0, \"Hook too many.\\r\\n\"); 27\treturn false; 28\t} 29\tstatus = PsLookupProcessByProcessId(pid, \u0026Process); 30\tif (!NT_SUCCESS(status)) { 31\tDbgPrintEx(77, 0, \"failed to get pid.\\r\\n\"); 32\treturn false; 33\t} 34\tauto ret = isolationPages(pid, *oFuncAddr); 35\tif (!ret)return false; 36\tDbgPrintEx(77, 0, \"ready to diasm.\\r\\n\"); 37\twhile (uBreakBytes \u003c breakBytesLeast) { 38\tif (!hde64_disasm(JmpAddrStart + uBreakBytes, \u0026hde_info)) { 39\tDbgPrintEx(77, 0, \"failed to diasm addr.\\r\\n\"); 40\tObDereferenceObject(Process); 41\treturn false; 42\t} 43\tuBreakBytes += hde_info.len; 44\t} 45\tDbgPrintEx(77, 0, \"finish disasm.\\r\\n\"); 46\tunsigned char trampLineCode[trampLineBreakBytes] = { 47\t0x6A, 0x00, // push 0 48\t0x3E, 0xC7, 0x04, 0x24, 0x00, 0x00, 0x00, 0x00, // mov dword ptr ss : [rsp] , 0x00 49\t0x3E, 0xC7, 0x44, 0x24, 0x04, 0x00, 0x00, 0x00, 0x00, // mov dword ptr ss : [rsp + 4] , 0x00 50\t0xC3\t// ret 51\t}; 52\tchar absolutejmpCode[14] = { 0xFF,0x25,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 }; 53\t*((PUINT32)\u0026trampLineCode[6]) = (UINT32)(((uint64_t)JmpAddrStart + uBreakBytes) \u0026 0XFFFFFFFF); 54\t*((PUINT32)\u0026trampLineCode[15]) = (UINT32)((((uint64_t)JmpAddrStart + uBreakBytes) \u003e\u003e 32) \u0026 0XFFFFFFFF); 55 56\tmemcpy(TrampLine, JmpAddrStart, uBreakBytes); 57\tmemcpy(TrampLine + uBreakBytes, trampLineCode, trampLineBreakBytes); 58\t//添加Hook信息 59\tfor (int i = 0; i \u003c MAX_HOOK_COUNT; i++) { 60\tif (m_info[i].pid == 0) { 61\tm_info[i].oriAddr = JmpAddrStart; 62\tmemcpy(m_info[i].oriBytes, JmpAddrStart, 14); 63\tm_info[i].pid = pid; 64\tm_curHookCount++; 65\tbreak; 66\t} 67\t} 68\tDbgPrintEx(77, 0, \"ready to create trampline.\\r\\n\"); 69\t*((ULONG64*)(\u0026absolutejmpCode[6])) = (ULONG64)targetFuncAddr; 70\tKeStackAttachProcess(Process, \u0026Apc); 71\t//auto oIrpl = WPOFF(); 72\t//memcpy(JmpAddrStart, absolutejmpCode, 14); 73\t//DbgPrintEx(77, 0, \"[JmpAddrStart]%p\\r\\n\",JmpAddrStart); 74\tDbgPrintEx(77, 0, \"[absolutejmpCode]\"); 75\tfor (int i = 0; i \u003c 14; i++) { 76\tDbgPrintEx(77, 0, \"%02X\", (unsigned char)absolutejmpCode[i]); 77\t} 78\tDbgPrintEx(77, 0, \"\\r\\n\"); 79\tBOOLEAN success = MDLWriteMemory(JmpAddrStart, absolutejmpCode, 14); 80\tif (!success) { 81\tDbgPrintEx(77, 0, \"failed to MDL write jmpcode.\\r\\n\"); 82\treturn false; 83\t} 84\tKeUnstackDetachProcess(\u0026Apc); 85\t*oFuncAddr = TrampLine; 86\tm_trampLineUsed += uBreakBytes + trampLineBreakBytes; 87\tObDereferenceObject(Process); 88\treturn true; 89} 下面我尝试Hook explore.exe进程的NtCreateFile函数看看效果，系统版本：Win10 1903，另外我还测试了Win10 21H2、Win11 21H2，挂了6小时左右未出现PG\n1NTSTATUS HookNtCreateFile( 2 OUT PHANDLE FileHandle, 3 IN ACCESS_MASK DesiredAccess, 4 IN POBJECT_ATTRIBUTES ObjectAttributes, 5 OUT PIO_STATUS_BLOCK IoStatusBlock, 6 IN PLARGE_INTEGER AllocationSize OPTIONAL, 7 IN ULONG FileAttributes, 8 IN ULONG ShareAccess, 9 IN ULONG CreateDisposition, 10 IN ULONG CreateOptions, 11 IN PVOID EaBuffer OPTIONAL, 12 IN ULONG EaLength) 13{ 14 DbgPrintEx(77, 0, \"[+]Create Files.\\r\\n\"); 15 if (ObjectAttributes \u0026\u0026 ObjectAttributes-\u003eObjectName \u0026\u0026 ObjectAttributes-\u003eObjectName-\u003eBuffer) { 16 wchar_t* name = (wchar_t*)ExAllocatePoolWithTag(NonPagedPool, ObjectAttributes-\u003eObjectName-\u003eLength + sizeof(wchar_t), 'name'); 17 RtlZeroMemory(name, ObjectAttributes-\u003eObjectName-\u003eLength + sizeof(wchar_t)); 18 RtlCopyMemory(name, ObjectAttributes-\u003eObjectName-\u003eBuffer, ObjectAttributes-\u003eObjectName-\u003eLength); 19 if (wcsstr(name, L\"MyHook.txt\")) { 20 ExFreePool(name); 21 return STATUS_ACCESS_DENIED; 22 } 23 ExFreePool(name); 24 } 25 26 return g_OriginNtCreateFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions, EaBuffer, EaLength); 27} 效果图：\n结语 PTE Hook其实已经是一种比较古老的方法了，不过研究完之后，我觉得对于x64架构的认识以及Windows内核的入门还挺有帮助的。\n",
+  "wordCount" : "5341",
+  "inLanguage": "zh",
+  "image": "https://i.postimg.cc/7hwBy7VS/calcr.png","datePublished": "2024-08-16T01:12:53+08:00",
+  "dateModified": "2024-08-16T01:12:53+08:00",
+  "author":{
+    "@type": "Person",
+    "name": "Loft"
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://ybliangcha.github.io/posts/pte-hook-analysis/"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Loft's Blog",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://ybliangcha.github.io/favicon.png"
+    }
+  }
+}
+</script>
+</head>
+
+<body class=" dark" id="top">
+<script>
+    if (localStorage.getItem("pref-theme") === "light") {
+        document.body.classList.remove('dark')
+    }
+
+</script>
+
+<header class="header">
+    <nav class="nav">
+        <div class="logo">
+            <a href="https://ybliangcha.github.io/" accesskey="h" title="Loft&#39;s Blog (Alt + H)">Loft&#39;s Blog</a>
+            <div class="logo-switches">
+                <button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme">
+                    <svg id="moon" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <svg id="sun" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <ul id="menu">
+            <li>
+                <a href="https://ybliangcha.github.io/" title="Loft&#39;s Blog">
+                    <span>首页</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://ybliangcha.github.io/archives/" title="归档">
+                    <span>归档</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://ybliangcha.github.io/categories/" title="Categories">
+                    <span>分类</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://ybliangcha.github.io/tags/" title="Tags">
+                    <span>标签</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://ybliangcha.github.io/search/" title="搜索">
+                    <span>搜索</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://ybliangcha.github.io/about/" title="关于">
+                    <span>关于</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+</header>
+<main class="main">
+
+<article class="post-single">
+  <header class="post-header">
+    
+    <h1 class="post-title entry-hint-parent">
+      PTE Hook原理浅析
+    </h1>
+    <div class="post-meta"><span title='2024-08-16 01:12:53 +0800 CST'>2024-08-16</span>&nbsp;·&nbsp;11 分钟&nbsp;·&nbsp;Loft
+
+</div>
+  </header> <div class="toc">
+    <details >
+        <summary accesskey="c" title="(Alt + C)">
+            <span class="details">目录</span>
+        </summary>
+
+        <div class="inner"><ul>
+                <li>
+                    <a href="#%e4%bb%80%e4%b9%88%e6%98%afpte-hook" aria-label="什么是PTE Hook">什么是PTE Hook</a></li>
+                <li>
+                    <a href="#%e7%90%86%e8%ae%ba%e7%9f%a5%e8%af%86" aria-label="理论知识">理论知识</a><ul>
+                        
+                <li>
+                    <a href="#cpu%e8%ae%bf%e9%97%ae%e7%89%a9%e7%90%86%e5%9c%b0%e5%9d%80" aria-label="CPU访问物理地址">CPU访问物理地址</a></li>
+                <li>
+                    <a href="#%e9%a1%b5%e8%a1%a8%e8%87%aa%e6%98%a0%e5%b0%84" aria-label="页表自映射">页表自映射</a></li></ul>
+                </li>
+                <li>
+                    <a href="#pte-hook%e5%8e%9f%e7%90%86" aria-label="PTE Hook原理">PTE Hook原理</a></li>
+                <li>
+                    <a href="#%e5%ae%9e%e6%88%98" aria-label="实战">实战</a></li>
+                <li>
+                    <a href="#%e7%bb%93%e8%af%ad" aria-label="结语">结语</a>
+                </li>
+            </ul>
+        </div>
+    </details>
+</div>
+
+  <div class="post-content"><h3 id="什么是pte-hook">什么是PTE Hook<a hidden class="anchor" aria-hidden="true" href="#什么是pte-hook">#</a></h3>
+<p>常规的inlineHook思路是直接修改目标函数的代码，使其先执行我们自己的函数，再跳转回来执行原函数。这种Hook是全局的，即Windows中每一个进程一旦调用被Hook的函数，就会受到我们的影响，也很容易被PatchGuard检查到。</p>
+<p>因此提出一种新的Hook思路，<strong>隔离具体进程的四级页表，使我们的Hook不影响全局</strong>。当然具体的Hook方法依然是inlineHook</p>
+<h3 id="理论知识">理论知识<a hidden class="anchor" aria-hidden="true" href="#理论知识">#</a></h3>
+<h4 id="cpu访问物理地址">CPU访问物理地址<a hidden class="anchor" aria-hidden="true" href="#cpu访问物理地址">#</a></h4>
+<p>首先解释一下x64架构下，CPU访问一个虚拟地址（也称线性地址）时的流程。Windows使用了四级页表结构，分别是PML4 (Page Map Level 4)、PDPT (Page Directory Pointer Table)、PD (Page Directory)、PT (Page Table)。我们知道一个虚拟地址共64位，其中高16位是不使用的，因此总共只有48位，这48位按照9-9-9-9-12的结构拆分，前四个9表示四级页表的索引，最后一个12表示一个物理页（通常是4K）的页内偏移，这样CPU就找到了一个虚拟地址对应的物理地址。下面演示一个虚拟地址是如何拆分的。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln">1</span><span class="cl"><span class="err">比如这样一个虚拟地址</span> <span class="o">:</span> <span class="mh">0xfffff8037888e000</span>
+</span></span><span class="line"><span class="ln">2</span><span class="cl"><span class="err">高</span><span class="mi">16</span><span class="err">位不使用，可以看到全部被置为了</span><span class="mi">1</span><span class="err">，因此有效地址为</span> <span class="err">：</span> <span class="mh">0xf8037888e000</span>
+</span></span><span class="line"><span class="ln">3</span><span class="cl"><span class="err">转为二进制：</span> <span class="mi">1111</span> <span class="mi">1000</span> <span class="mo">0000</span> <span class="mo">0011</span> <span class="mo">0111</span> <span class="mi">1000</span> <span class="mi">1000</span> <span class="mi">1000</span> <span class="mi">1110</span> <span class="mo">0000</span> <span class="mo">0000</span> <span class="mo">0000</span>
+</span></span><span class="line"><span class="ln">4</span><span class="cl"><span class="err">第一个</span><span class="mi">9</span><span class="err">位</span><span class="o">:</span> <span class="mi">1</span> <span class="mi">1111</span> <span class="mo">0000</span> <span class="o">-&gt;</span> <span class="mh">0x1f0</span>  <span class="n">PML4</span> <span class="n">Index</span>
+</span></span><span class="line"><span class="ln">5</span><span class="cl"><span class="err">第二个</span><span class="mi">9</span><span class="err">位</span><span class="o">:</span> <span class="mi">0</span> <span class="mo">0000</span> <span class="mi">1101</span> <span class="o">-&gt;</span> <span class="mh">0xd</span>	<span class="n">PDPT</span> <span class="n">Index</span>
+</span></span><span class="line"><span class="ln">6</span><span class="cl"><span class="err">第三个</span><span class="mi">9</span><span class="err">位</span><span class="o">:</span> <span class="mi">1</span> <span class="mi">1100</span> <span class="mo">0100</span> <span class="o">-&gt;</span> <span class="mh">0x1c4</span>	<span class="n">PT</span> <span class="n">Index</span>
+</span></span><span class="line"><span class="ln">7</span><span class="cl"><span class="err">第四个</span><span class="mi">9</span><span class="err">位</span><span class="o">:</span> <span class="mi">0</span> <span class="mi">1000</span> <span class="mi">1110</span> <span class="o">-&gt;</span> <span class="mh">0x8e</span>	<span class="n">PD</span> <span class="n">Index</span>
+</span></span><span class="line"><span class="ln">8</span><span class="cl"><span class="err">最后</span><span class="mi">12</span><span class="err">位页内偏移</span><span class="o">:</span> <span class="mo">00</span> <span class="mo">0000</span> <span class="mo">0000</span> <span class="o">-&gt;</span> <span class="mi">0</span>	<span class="n">Offset</span>
+</span></span></code></pre></div><p>CR3寄存器是x64架构下一个重要的系统寄存器，其中存储的值是当前进程PML4表的物理基地址，之前已经计算出Index，因此通过CR3拿到基地址后，可以逐层的索引到物理地址。</p>
+<h4 id="页表自映射">页表自映射<a hidden class="anchor" aria-hidden="true" href="#页表自映射">#</a></h4>
+<p>根据上面讲的，我们明白CPU是这样找到物理地址的：PML4-&gt;PDPT-&gt;PD-&gt;PT-&gt;Physical Page，共有4次访问内存。由于CPU寻址是一个高频操作，为了简化这一流程，Windows引入了一个很精妙的机制：<strong>页表自映射</strong>。</p>
+<p>页表自映射，即在PML4这张表的其中一项中，存储PML4表基地址。比如假设在索引0x100处存储：</p>
+<p><img alt="image-20250307204935017" loading="lazy" src="https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/image-20250307204935017.png"></p>
+<p>因此，在访问PML4索引0x100处，其实就是在访问PML4自身，所以被称为页表自映射。</p>
+<p>你可能会想，这么做白白浪费了8字节空间，为什么要设置一个这样的页表项，他的精妙之处是这样的：</p>
+<p>我们先从PML4入手，我们知道一个48位有效地址的高9位是PML4的索引，这个索引对应的页表项存储的本应该是下一级页表，即PDPT的物理基地址，但是由于引入了页表自映射，因此就必然有一个索引对应的页表项存储的是PML4自身的基地址，不妨将这一索引设为S（在上图中这个索引是0x100）。</p>
+<p>我们先采用这样的格式表示一个48位的虚拟地址<code>(A)(B)(C)(D)(Offset)</code>，其中A是PML4的索引</p>
+<p>当 <code>A == B == C == D == S &amp;&amp; Offset == 0</code> 时，CPU访问这个虚拟地址时会出现这样的寻址情况：</p>
+<p>PML4 Index == S，指向PML4表物理基地址，PDPT Index == S ，又指向PML4表物理基地址，以此类推，PD和PT也都指向PML4表物理基地址。因此<code>(S)(S)(S)(S)(000000000000)</code>对应的物理地址就是PML4表的<strong>物理基地址</strong>，不妨把这个虚拟地址称作<strong>PML4的表虚拟基地址</strong>。用数学公式将之表达：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln">1</span><span class="cl"><span class="n">PML4_VirtualBase</span> <span class="o">=</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">39</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">30</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">21</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">12</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">2</span><span class="cl"><span class="c1">//S &lt;&lt; 39 就是将一串48位的二进制数的高9位设为S，或运算就是将每次设置的值连起来放在一个数上
+</span></span></span><span class="line"><span class="ln">3</span><span class="cl"><span class="c1">//假设 S &lt;&lt; 39 == 0xF6E0000000000000 S &lt;&lt; 30 == 0x0000074000000000
+</span></span></span><span class="line"><span class="ln">4</span><span class="cl"><span class="c1">//那么 (S &lt;&lt; 39) | (S &lt;&lt; 30) == 0xF6E0074000000000
+</span></span></span></code></pre></div><p>根据上面的理论，显然当<code>A == B == C == S &amp;&amp; D == PDPT_Index &amp;&amp; Offset == 0</code>时，也就是说其中一位指向了PDPT的基地址，可以得到PDPT的表虚拟基地址</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln">1</span><span class="cl"><span class="n">PDPT_VirtualBase</span> <span class="o">=</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">39</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">30</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">21</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">PDPT_Index</span> <span class="o">&lt;&lt;</span> <span class="mi">12</span><span class="p">)</span>
+</span></span></code></pre></div><p>以此类推，我们就可以得到计算最低一级的页表PT的表虚拟基地址的计算公式，这里顺便展示PD的计算公式：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln">1</span><span class="cl"><span class="n">PT_VirtualBase</span> <span class="o">=</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">39</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">PDPT_Index</span> <span class="o">&lt;&lt;</span> <span class="mi">30</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">PD_Index</span> <span class="o">&lt;&lt;</span> <span class="mi">21</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">PT_Index</span> <span class="o">&lt;&lt;</span> <span class="mi">12</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">2</span><span class="cl"><span class="n">PD_VirtualBase</span> <span class="o">=</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">39</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">30</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">PDPT_Index</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">PD_Index</span> <span class="o">&lt;&lt;</span> <span class="mi">12</span><span class="p">)</span>
+</span></span></code></pre></div><p>以上是利用页表自映射机制定位到PT表基地址，实际上也可以利用这个原理定位到任意一个VA（虚拟地址）对应的PTE（Page Table Entry，即PT条目，也即PT表中的一项）。</p>
+<p>显然以下公式成立：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln">1</span><span class="cl"><span class="n">PTE_VirtualAddress</span> <span class="o">=</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">39</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">PML4_Index</span> <span class="o">&lt;&lt;</span> <span class="mi">30</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">PDPT_Index</span> <span class="o">&lt;&lt;</span> <span class="mi">21</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">PD_Index</span> <span class="o">&lt;&lt;</span> <span class="mi">12</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">PT_Index</span> <span class="o">&lt;&lt;</span> <span class="mi">3</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">2</span><span class="cl"><span class="cm">/*
+</span></span></span><span class="line"><span class="ln">3</span><span class="cl"><span class="cm">理解最后的(PT_Index &lt;&lt; 3)的这一项，因为每个PTE占8字节，左移3位即乘8，也理解为i*8作为偏移来找到具体的
+</span></span></span><span class="line"><span class="ln">4</span><span class="cl"><span class="cm">的PTE，实际上就是通过自映射机制将PT表当作了原来的物理页面进行查找
+</span></span></span><span class="line"><span class="ln">5</span><span class="cl"><span class="cm">*/</span>
+</span></span></code></pre></div><p>通过我们构造出的这个虚拟地址，可以直接读写PTE而不需要知道其物理地址。</p>
+<p>最后再将一个很简洁的通过PML4的表虚拟基地址得到其他三级页表虚拟基地址的公式，我们知道：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln">1</span><span class="cl"><span class="n">PML4_VirtualBase</span> <span class="o">=</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">39</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">30</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">21</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">12</span><span class="p">)</span>
+</span></span></code></pre></div><p>如果将后两个S置为0，即不考虑偏移且往后找一级页表，就可以得到PDPT的表虚拟基地址</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln">1</span><span class="cl"><span class="n">PDPT_VirtualBase</span> <span class="o">=</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">39</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">S</span> <span class="o">&lt;&lt;</span> <span class="mi">30</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="mi">0</span> <span class="o">&lt;&lt;</span> <span class="mi">21</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="mi">0</span> <span class="o">&lt;&lt;</span> <span class="mi">12</span><span class="p">)</span>
+</span></span></code></pre></div><p>数学上，上面这个式子实际上等价于PML4的虚拟基地址的低21位置0，即</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln">1</span><span class="cl"><span class="n">PDPT_VirtualBase</span> <span class="o">=</span> <span class="p">(</span><span class="n">PML4_VirtualBase</span> <span class="o">&gt;&gt;</span> <span class="mi">21</span><span class="p">)</span> <span class="o">&lt;&lt;</span> <span class="mi">21</span>
+</span></span></code></pre></div><p>同理：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln">1</span><span class="cl"><span class="n">PD_VirtualBase</span> <span class="o">=</span> <span class="p">(</span><span class="n">PML4_VirtualBase</span> <span class="o">&gt;&gt;</span> <span class="mi">30</span><span class="p">)</span> <span class="o">&lt;&lt;</span> <span class="mi">30</span>
+</span></span><span class="line"><span class="ln">2</span><span class="cl"><span class="n">PT_VirtualBase</span> <span class="o">=</span> <span class="p">(</span><span class="n">PML4_VirtualBase</span> <span class="o">&gt;&gt;</span> <span class="mi">39</span><span class="p">)</span> <span class="o">&lt;&lt;</span> <span class="mi">39</span>
+</span></span></code></pre></div><p>另外，由于上面计算VA对应的PTE公式过于复杂，是主动构造了9-9-9-9-12的虚拟地址结构，还有一个通过基地址+偏移的方法来计算：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln">1</span><span class="cl"><span class="n">PTE_VirtualAddress</span> <span class="o">=</span> <span class="n">PTE_Base</span> <span class="o">+</span> <span class="p">(</span><span class="n">VA</span> <span class="o">&gt;&gt;</span> <span class="mi">12</span><span class="p">)</span> <span class="o">&lt;&lt;</span> <span class="mi">3</span>
+</span></span><span class="line"><span class="ln">2</span><span class="cl"><span class="cm">/*
+</span></span></span><span class="line"><span class="ln">3</span><span class="cl"><span class="cm">VA &gt;&gt; 12 其实就是 VA / 4096，我们知道一个页就是4096K，所以VA &gt;&gt; 12 就是虚拟页号，每一页对应一个PTE，
+</span></span></span><span class="line"><span class="ln">4</span><span class="cl"><span class="cm">一个PTE是8字节，那么上式就变成了：
+</span></span></span><span class="line"><span class="ln">5</span><span class="cl"><span class="cm">*/</span>
+</span></span><span class="line"><span class="ln">6</span><span class="cl"><span class="n">PTE_VirtualAddress</span> <span class="o">=</span> <span class="n">PTE_Base</span> <span class="o">+</span> <span class="n">Offset</span> <span class="o">*</span> <span class="mi">8</span>
+</span></span></code></pre></div><p>由于Windows开启了基址随机化，页表的虚拟基地址每次开机都不一样，因此需要一个巧妙的方法定位页表基地址，这里给出鹅厂的方法：利用页表自映射定位。由于存在页表自映射这一机制，因此，在PML4表的512个地址中，必然有一个存放着PML4的表物理地址，即CR3的值。所以可以通过映射CR3物理地址的虚拟地址，遍历这个地址页面的512个地址，哪个地址等于CR3的值，哪个地址就是PML4的表虚拟基地址。考虑以下算法：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="n">ULONG64</span> <span class="nf">GetPml4Base</span><span class="p">()</span>
+</span></span><span class="line"><span class="ln"> 2</span><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 3</span><span class="cl">	<span class="n">PHYSICAL_ADDRESS</span> <span class="n">pCr3</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln"> 4</span><span class="cl">	<span class="n">pCr3</span><span class="p">.</span><span class="n">QuadPart</span> <span class="o">=</span> <span class="n">__readcr3</span><span class="p">();</span>
+</span></span><span class="line"><span class="ln"> 5</span><span class="cl">	<span class="n">PULONG64</span> <span class="n">pCmpArr</span> <span class="o">=</span> <span class="p">(</span><span class="n">PULONG64</span><span class="p">)</span><span class="n">MmGetVirtualForPhysical</span><span class="p">(</span><span class="n">pCr3</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln"> 6</span><span class="cl">
+</span></span><span class="line"><span class="ln"> 7</span><span class="cl">	<span class="kt">int</span> <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 8</span><span class="cl">	<span class="cm">/*
+</span></span></span><span class="line"><span class="ln"> 9</span><span class="cl"><span class="cm">	*pCmpArr（当前条目，即PML4E的值）表示指向下一级页表的物理地址
+</span></span></span><span class="line"><span class="ln">10</span><span class="cl"><span class="cm">	&amp;0xFFFFFFFFF000即获取Page_Frame_Number 页帧号
+</span></span></span><span class="line"><span class="ln">11</span><span class="cl"><span class="cm">	*/</span>
+</span></span><span class="line"><span class="ln">12</span><span class="cl">	<span class="k">while</span> <span class="p">((</span><span class="o">*</span><span class="n">pCmpArr</span> <span class="o">&amp;</span> <span class="mh">0xFFFFFFFFF000</span><span class="p">)</span> <span class="o">!=</span> <span class="n">pCr3</span><span class="p">.</span><span class="n">QuadPart</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">13</span><span class="cl">	<span class="p">{</span>
+</span></span><span class="line"><span class="ln">14</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="o">++</span><span class="n">count</span> <span class="o">&gt;=</span> <span class="mi">512</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">15</span><span class="cl">		<span class="p">{</span>
+</span></span><span class="line"><span class="ln">16</span><span class="cl">			<span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">17</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">18</span><span class="cl">		<span class="n">pCmpArr</span><span class="o">++</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">19</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">20</span><span class="cl">
+</span></span><span class="line"><span class="ln">21</span><span class="cl">	<span class="k">return</span> <span class="p">(</span><span class="n">ULONG64</span><span class="p">)</span><span class="n">pCmpArr</span> <span class="o">&amp;</span> <span class="mh">0xFFFFFFFFFFFFF000</span><span class="p">;</span><span class="c1">//忽略后12位标志位
+</span></span></span><span class="line"><span class="ln">22</span><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>理论知识就到这里了。</p>
+<h3 id="pte-hook原理">PTE Hook原理<a hidden class="anchor" aria-hidden="true" href="#pte-hook原理">#</a></h3>
+<p>首先思考一个问题，为什么常规Hook只是修改了一个进程的内核函数，却导致全局的内核函数被修改而被PG检查到。这是因为，用户态下的进程对应的PML4表的高256项都是相同的，指向了共享的内核PDPT，一旦我们修改任意一项PTE，就会产生连锁的影响PT-&gt;PD-&gt;PDPT-&gt;PML4，又由于PML4是共享的，所以全局的函数都被修改了。</p>
+<p>因此我们可以先替换掉一项PML4E，这一项PML4E被我们替换后，指向一个伪造的PDPT表，再指向一个伪造的PD表，一个伪造的PT表，最后指向我们Hook的函数。这样被修改的函数只局限于这一个进程，在一定程度上可以规避PG。</p>
+<p>此外，还需要考虑大小页的问题。小页指的就是一般的4K大小的页，大页指的是2M的页，是操作系统为了提高访问内存性能而开发的。根据上面的伪造替换规则，一般来说会想到：<strong>大页换大页，小页换小页</strong>。但是由于页表的物理内存必然是连续的，而Windows的物理内存机制是碎片化的，开机越久越难申请到2M的连续内存，所以考虑使用页表分割的方法，即将一个2M的大页分成512个小页。在如下的代码中，我们只申请了一页连续的内存，用来存放指向512个小页的PTE，每个都用来指向原大页的不同4K部分。</p>
+<h3 id="实战">实战<a hidden class="anchor" aria-hidden="true" href="#实战">#</a></h3>
+<p>页表分割：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="kt">bool</span> <span class="nf">splitLargePages</span><span class="p">(</span><span class="n">pde_64</span><span class="o">*</span> <span class="n">in_pde</span><span class="p">,</span> <span class="n">pde_64</span><span class="o">*</span> <span class="n">out_pde</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln"> 2</span><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 3</span><span class="cl">	<span class="n">PHYSICAL_ADDRESS</span> <span class="n">MaxAddrPa</span><span class="p">{</span> <span class="mi">0</span> <span class="p">},</span> <span class="n">LowAddrPa</span><span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln"> 4</span><span class="cl">	<span class="n">MaxAddrPa</span><span class="p">.</span><span class="n">QuadPart</span> <span class="o">=</span> <span class="n">MAXULONG64</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 5</span><span class="cl">	<span class="n">LowAddrPa</span><span class="p">.</span><span class="n">QuadPart</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 6</span><span class="cl">	<span class="n">pt_entry_64</span><span class="o">*</span> <span class="n">Pt</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 7</span><span class="cl">	<span class="k">auto</span> <span class="n">start_pfn</span> <span class="o">=</span> <span class="n">in_pde</span><span class="o">-&gt;</span><span class="n">page_frame_number</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 8</span><span class="cl">	<span class="n">Pt</span> <span class="o">=</span> <span class="p">(</span><span class="n">pt_entry_64</span><span class="o">*</span><span class="p">)</span><span class="n">MmAllocateContiguousMemorySpecifyCache</span><span class="p">(</span><span class="n">PAGE_SIZE</span><span class="p">,</span> <span class="n">LowAddrPa</span><span class="p">,</span> <span class="n">MaxAddrPa</span><span class="p">,</span> <span class="n">LowAddrPa</span><span class="p">,</span> <span class="n">MmCached</span><span class="p">);</span><span class="c1">//默认对齐
+</span></span></span><span class="line"><span class="ln"> 9</span><span class="cl"><span class="c1"></span>	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">Pt</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">10</span><span class="cl">		<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;failed to alloc contiguous for new pt.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">11</span><span class="cl">		<span class="k">return</span> <span class="nb">false</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">12</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">13</span><span class="cl">	<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">512</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">14</span><span class="cl">		<span class="c1">//分割成小页，构建Pt
+</span></span></span><span class="line"><span class="ln">15</span><span class="cl"><span class="c1"></span>		<span class="n">Pt</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">flags</span> <span class="o">=</span> <span class="n">in_pde</span><span class="o">-&gt;</span><span class="n">flags</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">16</span><span class="cl">		<span class="n">Pt</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">large_page</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">17</span><span class="cl">		<span class="n">Pt</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">global</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">18</span><span class="cl">		<span class="n">Pt</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">page_frame_number</span> <span class="o">=</span> <span class="n">start_pfn</span> <span class="o">+</span> <span class="n">i</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">19</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">20</span><span class="cl">	<span class="n">out_pde</span><span class="o">-&gt;</span><span class="n">flags</span> <span class="o">=</span> <span class="n">in_pde</span><span class="o">-&gt;</span><span class="n">flags</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">21</span><span class="cl">	<span class="n">out_pde</span><span class="o">-&gt;</span><span class="n">large_page</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">22</span><span class="cl">	<span class="n">out_pde</span><span class="o">-&gt;</span><span class="n">page_frame_number</span> <span class="o">=</span> <span class="n">va_to_pa</span><span class="p">(</span><span class="n">Pt</span><span class="p">)</span> <span class="o">/</span> <span class="n">PAGE_SIZE</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">23</span><span class="cl">	<span class="k">return</span> <span class="nb">true</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">24</span><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>下面是页表伪造部分的代码：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln">1</span><span class="cl"><span class="k">typedef</span> <span class="k">struct</span> <span class="nc">_PTE_TABLE</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">2</span><span class="cl">    <span class="kt">void</span><span class="o">*</span> <span class="n">LineAddress</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">3</span><span class="cl">    <span class="n">pte_64</span><span class="o">*</span> <span class="n">PteAddress</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">4</span><span class="cl">    <span class="n">pde_64</span><span class="o">*</span> <span class="n">PdeAddress</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">5</span><span class="cl">    <span class="n">pdpte_64</span><span class="o">*</span> <span class="n">PdpteAddress</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">6</span><span class="cl">    <span class="n">pml4e_64</span><span class="o">*</span> <span class="n">Pml4eAddress</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">7</span><span class="cl"><span class="p">}</span><span class="n">PTE_TABLE</span><span class="p">,</span> <span class="o">*</span> <span class="n">PPTE_TABLE</span><span class="p">;</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="kt">bool</span> <span class="nf">isolationPageTable</span><span class="p">(</span><span class="n">cr3</span> <span class="n">cr3_reg</span><span class="p">,</span> <span class="kt">void</span><span class="o">*</span> <span class="n">replaceAlignAddr</span><span class="p">,</span> <span class="n">pde_64</span><span class="o">*</span> <span class="n">splitPDE</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln"> 2</span><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 3</span><span class="cl">	<span class="c1">//均指向4kb内存
+</span></span></span><span class="line"><span class="ln"> 4</span><span class="cl"><span class="c1"></span>	<span class="kt">uint64_t</span><span class="o">*</span> <span class="n">VaPt</span><span class="p">,</span> <span class="o">*</span> <span class="n">Va4kb</span><span class="p">,</span> <span class="o">*</span> <span class="n">VaPdt</span><span class="p">,</span> <span class="o">*</span> <span class="n">VaPdpt</span><span class="p">,</span> <span class="o">*</span> <span class="n">VaPml4t</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 5</span><span class="cl">
+</span></span><span class="line"><span class="ln"> 6</span><span class="cl">	<span class="n">PTE_TABLE</span> <span class="n">Table</span><span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln"> 7</span><span class="cl">	<span class="n">PHYSICAL_ADDRESS</span> <span class="n">MaxAddrPa</span><span class="p">{</span> <span class="mi">0</span> <span class="p">},</span> <span class="n">LowAddrPa</span><span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln"> 8</span><span class="cl">	<span class="n">MaxAddrPa</span><span class="p">.</span><span class="n">QuadPart</span> <span class="o">=</span> <span class="n">MAXULONG64</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 9</span><span class="cl">	<span class="n">LowAddrPa</span><span class="p">.</span><span class="n">QuadPart</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">10</span><span class="cl">	<span class="c1">//这里申请伪造页表的内存
+</span></span></span><span class="line"><span class="ln">11</span><span class="cl"><span class="c1"></span>	<span class="n">VaPt</span> <span class="o">=</span> <span class="p">(</span><span class="kt">uint64_t</span><span class="o">*</span><span class="p">)</span><span class="n">MmAllocateContiguousMemorySpecifyCache</span><span class="p">(</span><span class="n">PAGE_SIZE</span><span class="p">,</span> <span class="n">LowAddrPa</span><span class="p">,</span> <span class="n">MaxAddrPa</span><span class="p">,</span> <span class="n">LowAddrPa</span><span class="p">,</span> <span class="n">MmCached</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">12</span><span class="cl">	<span class="n">Va4kb</span> <span class="o">=</span> <span class="p">(</span><span class="kt">uint64_t</span><span class="o">*</span><span class="p">)</span><span class="n">MmAllocateContiguousMemorySpecifyCache</span><span class="p">(</span><span class="n">PAGE_SIZE</span><span class="p">,</span> <span class="n">LowAddrPa</span><span class="p">,</span> <span class="n">MaxAddrPa</span><span class="p">,</span> <span class="n">LowAddrPa</span><span class="p">,</span> <span class="n">MmCached</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">13</span><span class="cl">	<span class="n">VaPdt</span> <span class="o">=</span> <span class="p">(</span><span class="kt">uint64_t</span><span class="o">*</span><span class="p">)</span><span class="n">MmAllocateContiguousMemorySpecifyCache</span><span class="p">(</span><span class="n">PAGE_SIZE</span><span class="p">,</span> <span class="n">LowAddrPa</span><span class="p">,</span> <span class="n">MaxAddrPa</span><span class="p">,</span> <span class="n">LowAddrPa</span><span class="p">,</span> <span class="n">MmCached</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">14</span><span class="cl">	<span class="n">VaPdpt</span> <span class="o">=</span> <span class="p">(</span><span class="kt">uint64_t</span><span class="o">*</span><span class="p">)</span><span class="n">MmAllocateContiguousMemorySpecifyCache</span><span class="p">(</span><span class="n">PAGE_SIZE</span><span class="p">,</span> <span class="n">LowAddrPa</span><span class="p">,</span> <span class="n">MaxAddrPa</span><span class="p">,</span> <span class="n">LowAddrPa</span><span class="p">,</span> <span class="n">MmCached</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">15</span><span class="cl">	<span class="n">VaPml4t</span> <span class="o">=</span> <span class="p">(</span><span class="kt">uint64_t</span><span class="o">*</span><span class="p">)</span><span class="n">pa_to_va</span><span class="p">(</span><span class="n">cr3_reg</span><span class="p">.</span><span class="n">address_of_page_directory</span> <span class="o">*</span> <span class="n">PAGE_SIZE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">16</span><span class="cl">    
+</span></span><span class="line"><span class="ln">17</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">VaPt</span> <span class="o">||</span> <span class="o">!</span><span class="n">Va4kb</span> <span class="o">||</span> <span class="o">!</span><span class="n">VaPdt</span> <span class="o">||</span> <span class="o">!</span><span class="n">VaPdpt</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">18</span><span class="cl">		<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;failed to alloc page table entry.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">19</span><span class="cl">		<span class="k">return</span> <span class="nb">false</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">20</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">21</span><span class="cl">	<span class="n">Table</span><span class="p">.</span><span class="n">LineAddress</span> <span class="o">=</span> <span class="n">replaceAlignAddr</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">22</span><span class="cl">	<span class="n">getPagesTable</span><span class="p">(</span><span class="n">Table</span><span class="p">);</span><span class="c1">//这个函数是利用理论知识讲的公式获取任意VA对应的PTE、PDPTE、PDE、PXE
+</span></span></span><span class="line"><span class="ln">23</span><span class="cl"><span class="c1"></span>    
+</span></span><span class="line"><span class="ln">24</span><span class="cl">	<span class="c1">//获取索引
+</span></span></span><span class="line"><span class="ln">25</span><span class="cl"><span class="c1"></span>	<span class="n">UINT64</span> <span class="n">pml4eindex</span> <span class="o">=</span> <span class="p">((</span><span class="kt">uint64_t</span><span class="p">)</span><span class="n">replaceAlignAddr</span> <span class="o">&amp;</span> <span class="mh">0x0000FF8000000000</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="mi">39</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">26</span><span class="cl">	<span class="n">UINT64</span> <span class="n">pdpteindex</span> <span class="o">=</span> <span class="p">((</span><span class="kt">uint64_t</span><span class="p">)</span><span class="n">replaceAlignAddr</span> <span class="o">&amp;</span> <span class="mh">0x0000007FC0000000</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="mi">30</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">27</span><span class="cl">	<span class="n">UINT64</span> <span class="n">pdeindex</span> <span class="o">=</span> <span class="p">((</span><span class="kt">uint64_t</span><span class="p">)</span><span class="n">replaceAlignAddr</span> <span class="o">&amp;</span> <span class="mh">0x000000003FE00000</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="mi">21</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">28</span><span class="cl">	<span class="n">UINT64</span> <span class="n">pteindex</span> <span class="o">=</span> <span class="p">((</span><span class="kt">uint64_t</span><span class="p">)</span><span class="n">replaceAlignAddr</span> <span class="o">&amp;</span> <span class="mh">0x00000000001FF000</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="mi">12</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">29</span><span class="cl">    
+</span></span><span class="line"><span class="ln">30</span><span class="cl">	<span class="c1">//判断是否为大页，因为大页的PT是没有值的，所以要将VaPt指向分割成小页后的PT表，就是上面代码展示的
+</span></span></span><span class="line"><span class="ln">31</span><span class="cl"><span class="c1"></span>	<span class="k">if</span> <span class="p">(</span><span class="n">Table</span><span class="p">.</span><span class="n">PdeAddress</span><span class="o">-&gt;</span><span class="n">large_page</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">32</span><span class="cl">		<span class="n">MmFreeContiguousMemorySpecifyCache</span><span class="p">(</span><span class="n">VaPt</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">,</span> <span class="n">MmCached</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">33</span><span class="cl">		<span class="n">VaPt</span> <span class="o">=</span> <span class="p">(</span><span class="kt">uint64_t</span><span class="o">*</span><span class="p">)</span><span class="n">pa_to_va</span><span class="p">(</span><span class="n">splitPDE</span><span class="o">-&gt;</span><span class="n">page_frame_number</span> <span class="o">*</span> <span class="n">PAGE_SIZE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">34</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">35</span><span class="cl">	<span class="k">else</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">36</span><span class="cl">		<span class="c1">//小页，Pt数组是有值的，先复制
+</span></span></span><span class="line"><span class="ln">37</span><span class="cl"><span class="c1"></span>		<span class="n">memcpy</span><span class="p">(</span><span class="n">VaPt</span><span class="p">,</span> <span class="n">Table</span><span class="p">.</span><span class="n">PteAddress</span> <span class="o">-</span> <span class="n">pteindex</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">38</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">39</span><span class="cl">    <span class="c1">//这里我的Table结构中的页表均为指针，因此这里做的减法是指针减法，不需要乘以8
+</span></span></span><span class="line"><span class="ln">40</span><span class="cl"><span class="c1"></span>    <span class="c1">//另外这里做减法的意思是获取页表的起始地址，即基地址
+</span></span></span><span class="line"><span class="ln">41</span><span class="cl"><span class="c1"></span>	<span class="n">memcpy</span><span class="p">(</span><span class="n">Va4kb</span><span class="p">,</span> <span class="n">replaceAlignAddr</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">42</span><span class="cl">	<span class="n">memcpy</span><span class="p">(</span><span class="n">VaPdt</span><span class="p">,</span> <span class="n">Table</span><span class="p">.</span><span class="n">PdeAddress</span> <span class="o">-</span> <span class="n">pdeindex</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">);</span><span class="c1">//指针减法
+</span></span></span><span class="line"><span class="ln">43</span><span class="cl"><span class="c1"></span>	<span class="n">memcpy</span><span class="p">(</span><span class="n">VaPdpt</span><span class="p">,</span> <span class="n">Table</span><span class="p">.</span><span class="n">PdpteAddress</span> <span class="o">-</span> <span class="n">pdpteindex</span><span class="p">,</span> <span class="n">PAGE_SIZE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">44</span><span class="cl">
+</span></span><span class="line"><span class="ln">45</span><span class="cl">	<span class="c1">//替换页表的页框号，从Pte开始一直到Pml4e
+</span></span></span><span class="line"><span class="ln">46</span><span class="cl"><span class="c1"></span>	<span class="n">_disable</span><span class="p">();</span><span class="c1">//关中断防止替换被打断
+</span></span></span><span class="line"><span class="ln">47</span><span class="cl"><span class="c1"></span>	<span class="k">auto</span> <span class="n">pReplacePte</span> <span class="o">=</span> <span class="p">(</span><span class="n">pte_64</span><span class="o">*</span><span class="p">)</span><span class="o">&amp;</span><span class="n">VaPt</span><span class="p">[</span><span class="n">pteindex</span><span class="p">];</span>
+</span></span><span class="line"><span class="ln">48</span><span class="cl">	<span class="n">pReplacePte</span><span class="o">-&gt;</span><span class="n">page_frame_number</span> <span class="o">=</span> <span class="n">va_to_pa</span><span class="p">(</span><span class="n">Va4kb</span><span class="p">)</span> <span class="o">/</span> <span class="n">PAGE_SIZE</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">49</span><span class="cl">	<span class="k">auto</span> <span class="n">pReplacePde</span> <span class="o">=</span> <span class="p">(</span><span class="n">pde_64</span><span class="o">*</span><span class="p">)</span><span class="o">&amp;</span><span class="n">VaPdt</span><span class="p">[</span><span class="n">pdeindex</span><span class="p">];</span>
+</span></span><span class="line"><span class="ln">50</span><span class="cl">	<span class="n">pReplacePde</span><span class="o">-&gt;</span><span class="n">page_frame_number</span> <span class="o">=</span> <span class="n">va_to_pa</span><span class="p">(</span><span class="n">VaPt</span><span class="p">)</span> <span class="o">/</span> <span class="n">PAGE_SIZE</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">51</span><span class="cl">	<span class="n">pReplacePde</span><span class="o">-&gt;</span><span class="n">large_page</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">52</span><span class="cl">	<span class="n">pReplacePde</span><span class="o">-&gt;</span><span class="n">ignored_1</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">53</span><span class="cl">	<span class="n">pReplacePde</span><span class="o">-&gt;</span><span class="n">page_level_cache_disable</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">54</span><span class="cl">	<span class="k">auto</span> <span class="n">pReplacePdpte</span> <span class="o">=</span> <span class="p">(</span><span class="n">pdpte_64</span><span class="o">*</span><span class="p">)</span><span class="o">&amp;</span><span class="n">VaPdpt</span><span class="p">[</span><span class="n">pdpteindex</span><span class="p">];</span>
+</span></span><span class="line"><span class="ln">55</span><span class="cl">	<span class="n">pReplacePdpte</span><span class="o">-&gt;</span><span class="n">page_frame_number</span> <span class="o">=</span> <span class="n">va_to_pa</span><span class="p">(</span><span class="n">VaPdt</span><span class="p">)</span> <span class="o">/</span> <span class="n">PAGE_SIZE</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">56</span><span class="cl">	<span class="k">auto</span> <span class="n">pReplacePml4e</span> <span class="o">=</span> <span class="p">(</span><span class="n">pml4e_64</span><span class="o">*</span><span class="p">)</span><span class="o">&amp;</span><span class="n">VaPml4t</span><span class="p">[</span><span class="n">pml4eindex</span><span class="p">];</span>
+</span></span><span class="line"><span class="ln">57</span><span class="cl">	<span class="n">pReplacePml4e</span><span class="o">-&gt;</span><span class="n">page_frame_number</span> <span class="o">=</span> <span class="n">va_to_pa</span><span class="p">(</span><span class="n">VaPdpt</span><span class="p">)</span> <span class="o">/</span> <span class="n">PAGE_SIZE</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">58</span><span class="cl">
+</span></span><span class="line"><span class="ln">59</span><span class="cl">	<span class="c1">//刷新TLB
+</span></span></span><span class="line"><span class="ln">60</span><span class="cl"><span class="c1"></span>	<span class="n">__invlpg</span><span class="p">(</span><span class="n">pReplacePml4e</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">61</span><span class="cl">
+</span></span><span class="line"><span class="ln">62</span><span class="cl">	<span class="n">_enable</span><span class="p">();</span>
+</span></span><span class="line"><span class="ln">63</span><span class="cl">	<span class="k">return</span> <span class="nb">true</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">64</span><span class="cl">
+</span></span><span class="line"><span class="ln">65</span><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>最后写一段代码调用上面两个函数：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="kt">bool</span> <span class="nf">isolationPages</span><span class="p">(</span><span class="n">HANDLE</span> <span class="n">pid</span><span class="p">,</span> <span class="kt">void</span><span class="o">*</span> <span class="n">iso_address</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln"> 2</span><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 3</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">MmIsAddressValid</span><span class="p">(</span><span class="n">iso_address</span><span class="p">))</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 4</span><span class="cl">		<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;Invalid address: %p</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">iso_address</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln"> 5</span><span class="cl">		<span class="k">return</span> <span class="nb">false</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 6</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln"> 7</span><span class="cl">
+</span></span><span class="line"><span class="ln"> 8</span><span class="cl">	<span class="n">PEPROCESS</span> <span class="n">Process</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 9</span><span class="cl">	<span class="n">KAPC_STATE</span> <span class="n">Apc</span><span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln">10</span><span class="cl">	<span class="n">NTSTATUS</span> <span class="n">status</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">11</span><span class="cl">	<span class="kt">void</span><span class="o">*</span> <span class="n">AliginIsoAddr</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">12</span><span class="cl">	<span class="n">PTE_TABLE</span> <span class="n">Table</span><span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln">13</span><span class="cl">	<span class="n">status</span> <span class="o">=</span> <span class="n">PsLookupProcessByProcessId</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">Process</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">14</span><span class="cl">	<span class="c1">//附加要隔离的进程，每个进程的空间是独立的，这一步一定要做
+</span></span></span><span class="line"><span class="ln">15</span><span class="cl"><span class="c1"></span>	<span class="n">KeStackAttachProcess</span><span class="p">(</span><span class="n">Process</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">Apc</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">16</span><span class="cl">	<span class="n">AliginIsoAddr</span> <span class="o">=</span> <span class="n">PAGE_ALIGN</span><span class="p">(</span><span class="n">iso_address</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">17</span><span class="cl">	<span class="n">Table</span><span class="p">.</span><span class="n">LineAddress</span> <span class="o">=</span> <span class="n">AliginIsoAddr</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">18</span><span class="cl">
+</span></span><span class="line"><span class="ln">19</span><span class="cl">	<span class="n">getPagesTable</span><span class="p">(</span><span class="n">Table</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">20</span><span class="cl">
+</span></span><span class="line"><span class="ln">21</span><span class="cl">	<span class="kt">bool</span> <span class="n">bSuc</span> <span class="o">=</span> <span class="nb">false</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">22</span><span class="cl">	<span class="k">while</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">23</span><span class="cl">		<span class="c1">//大页分割
+</span></span></span><span class="line"><span class="ln">24</span><span class="cl"><span class="c1"></span>		<span class="n">pde_64</span> <span class="n">splitPDE</span><span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln">25</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="n">Table</span><span class="p">.</span><span class="n">PdeAddress</span><span class="o">-&gt;</span><span class="n">large_page</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">26</span><span class="cl">			<span class="n">bSuc</span> <span class="o">=</span> <span class="n">splitLargePages</span><span class="p">(</span><span class="n">Table</span><span class="p">.</span><span class="n">PdeAddress</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">splitPDE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">27</span><span class="cl">			<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">bSuc</span><span class="p">)</span><span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">28</span><span class="cl">			<span class="k">if</span> <span class="p">(</span><span class="n">Table</span><span class="p">.</span><span class="n">PdeAddress</span><span class="o">-&gt;</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="mh">0x100</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">29</span><span class="cl">				<span class="n">Table</span><span class="p">.</span><span class="n">PdeAddress</span><span class="o">-&gt;</span><span class="n">flags</span> <span class="o">&amp;=</span> <span class="o">~</span><span class="mh">0x100</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">30</span><span class="cl">                <span class="cm">/*
+</span></span></span><span class="line"><span class="ln">31</span><span class="cl"><span class="cm">                这里以及下面的的Table.PteAddress-&gt;global = 0;是在关闭G位
+</span></span></span><span class="line"><span class="ln">32</span><span class="cl"><span class="cm">                */</span>
+</span></span><span class="line"><span class="ln">33</span><span class="cl">			<span class="p">}</span>
+</span></span><span class="line"><span class="ln">34</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">35</span><span class="cl">		<span class="k">else</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">36</span><span class="cl">			<span class="k">if</span> <span class="p">(</span><span class="n">Table</span><span class="p">.</span><span class="n">PteAddress</span><span class="o">-&gt;</span><span class="n">global</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">37</span><span class="cl">				<span class="n">Table</span><span class="p">.</span><span class="n">PteAddress</span><span class="o">-&gt;</span><span class="n">global</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">38</span><span class="cl">			<span class="p">}</span>
+</span></span><span class="line"><span class="ln">39</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">40</span><span class="cl">
+</span></span><span class="line"><span class="ln">41</span><span class="cl">		<span class="n">cr3</span> <span class="n">Cr3</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">42</span><span class="cl">		<span class="n">Cr3</span><span class="p">.</span><span class="n">flags</span> <span class="o">=</span> <span class="n">__readcr3</span><span class="p">();</span>
+</span></span><span class="line"><span class="ln">43</span><span class="cl">		<span class="n">bSuc</span> <span class="o">=</span> <span class="n">isolationPageTable</span><span class="p">(</span><span class="n">Cr3</span><span class="p">,</span> <span class="n">AliginIsoAddr</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">splitPDE</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">44</span><span class="cl">
+</span></span><span class="line"><span class="ln">45</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="n">bSuc</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">46</span><span class="cl">			<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;isolation succeed.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">47</span><span class="cl">			<span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">48</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">49</span><span class="cl">		<span class="k">else</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">50</span><span class="cl">			<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;failed to isolation pages.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">51</span><span class="cl">			<span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">52</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">53</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">54</span><span class="cl">	<span class="n">KeUnstackDetachProcess</span><span class="p">(</span><span class="o">&amp;</span><span class="n">Apc</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">55</span><span class="cl">	<span class="n">ObDereferenceObject</span><span class="p">(</span><span class="n">Process</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">56</span><span class="cl">	<span class="k">return</span> <span class="n">bSuc</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">57</span><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>这里有一步之前没讲的操作，设置了G位。在CPU的内部有一个表叫做TLB，学过计组的都知道，这玩意叫做快表，其实是一个Cache，内部记录了很多东西，比如直接记录一个虚拟地址对应的物理地址，而不需要通过四级页表机制来查找。每次切换进程时，CR3都会改变，而TLB是跟着CR3变的。但是由于操作系统的高位映射是基本不变的，如果每次切换CR3都重新维护一个TLB，就会造成很大开销。因此诞生了Global，即全局位。这个位一旦被置1，那么切换进程CR3的时候，就不会刷新PDE或PTE的G位为1的页。这将导致：进程A切换到进程B，而进程A的某个虚拟地址还是保存在进程B的TLB中，下次进程B查找这个虚拟地址的值后，就会在TLB中找到进程A虚拟地址中对应的物理地址。</p>
+<p>这对我们的隔离操作是有害的， 因为若进程A恰好是我们隔离的进程，我们Hook了某个函数后，其他进程又从TLB中找到了被Hook的这个函数，那么隔离就失效了。因此，我们关闭伪造页对应的PTE或PDE的G位，强制切换进程时刷新TLB，其他进程就找不到我们的Hook了。</p>
+<p>讲完上面的代码，PTE Hook的核心进程隔离部分已经实现了，接下来只需要使用inlineHook框架就好了。下面是一个例子：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="kt">bool</span> <span class="n">PTEHookManager</span><span class="o">::</span><span class="n">PTEHook</span><span class="p">(</span><span class="n">HANDLE</span> <span class="n">pid</span><span class="p">,</span> <span class="kt">void</span><span class="o">**</span> <span class="n">oFuncAddr</span><span class="p">,</span> <span class="kt">void</span><span class="o">*</span> <span class="n">targetFuncAddr</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln"> 2</span><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 3</span><span class="cl">	<span class="k">static</span> <span class="kt">bool</span> <span class="n">bFirst</span> <span class="o">=</span> <span class="nb">true</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 4</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="n">bFirst</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 5</span><span class="cl">		<span class="n">m_PTEBase</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln"> 6</span><span class="cl">		<span class="n">m_trampLine</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">ExAllocatePoolWithTag</span><span class="p">(</span><span class="n">NonPagedPool</span><span class="p">,</span> <span class="n">PAGE_SIZE</span> <span class="o">*</span> <span class="mi">5</span><span class="p">,</span> <span class="err">&#39;</span><span class="n">Line</span><span class="err">&#39;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln"> 7</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">m_trampLine</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln"> 8</span><span class="cl">			<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;failed to create trampline.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln"> 9</span><span class="cl">			<span class="k">return</span> <span class="nb">false</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">10</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">11</span><span class="cl">		<span class="n">memset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">m_info</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">m_info</span><span class="p">));</span>
+</span></span><span class="line"><span class="ln">12</span><span class="cl">		<span class="n">memset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">m_globalBit</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">m_globalBit</span><span class="p">));</span>
+</span></span><span class="line"><span class="ln">13</span><span class="cl">		<span class="n">m_trampLineUsed</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">14</span><span class="cl">		<span class="n">bFirst</span> <span class="o">=</span> <span class="nb">false</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">15</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">16</span><span class="cl">	<span class="n">PEPROCESS</span> <span class="n">Process</span><span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln">17</span><span class="cl">	<span class="n">KAPC_STATE</span> <span class="n">Apc</span><span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln">18</span><span class="cl">	<span class="n">NTSTATUS</span> <span class="n">status</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">19</span><span class="cl">	<span class="k">const</span> <span class="kt">uint32_t</span> <span class="n">breakBytesLeast</span> <span class="o">=</span> <span class="mi">14</span><span class="p">;</span><span class="c1">//ff 25
+</span></span></span><span class="line"><span class="ln">20</span><span class="cl"><span class="c1"></span>	<span class="k">const</span> <span class="kt">uint32_t</span> <span class="n">trampLineBreakBytes</span> <span class="o">=</span> <span class="mi">20</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">21</span><span class="cl">	<span class="kt">uint32_t</span> <span class="n">uBreakBytes</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">22</span><span class="cl">	<span class="kt">char</span><span class="o">*</span> <span class="n">TrampLine</span> <span class="o">=</span> <span class="n">m_trampLine</span> <span class="o">+</span> <span class="n">m_trampLineUsed</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">23</span><span class="cl">	<span class="n">hde64s</span> <span class="n">hde_info</span><span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln">24</span><span class="cl">	<span class="kt">char</span><span class="o">*</span> <span class="n">JmpAddrStart</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="o">*</span><span class="n">oFuncAddr</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">25</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="n">m_curHookCount</span> <span class="o">==</span> <span class="n">MAX_HOOK_COUNT</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">26</span><span class="cl">		<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;Hook too many.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">27</span><span class="cl">		<span class="k">return</span> <span class="nb">false</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">28</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">29</span><span class="cl">	<span class="n">status</span> <span class="o">=</span> <span class="n">PsLookupProcessByProcessId</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">Process</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">30</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">NT_SUCCESS</span><span class="p">(</span><span class="n">status</span><span class="p">))</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">31</span><span class="cl">		<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;failed to get pid.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">32</span><span class="cl">		<span class="k">return</span> <span class="nb">false</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">33</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">34</span><span class="cl">	<span class="k">auto</span> <span class="n">ret</span> <span class="o">=</span> <span class="n">isolationPages</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="o">*</span><span class="n">oFuncAddr</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">35</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">ret</span><span class="p">)</span><span class="k">return</span> <span class="nb">false</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">36</span><span class="cl">	<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;ready to diasm.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">37</span><span class="cl">	<span class="k">while</span> <span class="p">(</span><span class="n">uBreakBytes</span> <span class="o">&lt;</span> <span class="n">breakBytesLeast</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">38</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">hde64_disasm</span><span class="p">(</span><span class="n">JmpAddrStart</span> <span class="o">+</span> <span class="n">uBreakBytes</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">hde_info</span><span class="p">))</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">39</span><span class="cl">			<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;failed to diasm addr.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">40</span><span class="cl">			<span class="n">ObDereferenceObject</span><span class="p">(</span><span class="n">Process</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">41</span><span class="cl">			<span class="k">return</span> <span class="nb">false</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">42</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">43</span><span class="cl">		<span class="n">uBreakBytes</span> <span class="o">+=</span> <span class="n">hde_info</span><span class="p">.</span><span class="n">len</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">44</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">45</span><span class="cl">	<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;finish disasm.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">46</span><span class="cl">	<span class="kt">unsigned</span> <span class="kt">char</span> <span class="n">trampLineCode</span><span class="p">[</span><span class="n">trampLineBreakBytes</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">47</span><span class="cl">	<span class="mh">0x6A</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">,</span>                                                <span class="c1">// push 0
+</span></span></span><span class="line"><span class="ln">48</span><span class="cl"><span class="c1"></span>	<span class="mh">0x3E</span><span class="p">,</span> <span class="mh">0xC7</span><span class="p">,</span> <span class="mh">0x04</span><span class="p">,</span> <span class="mh">0x24</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">,</span>            <span class="c1">// mov dword ptr ss : [rsp] , 0x00
+</span></span></span><span class="line"><span class="ln">49</span><span class="cl"><span class="c1"></span>	<span class="mh">0x3E</span><span class="p">,</span> <span class="mh">0xC7</span><span class="p">,</span> <span class="mh">0x44</span><span class="p">,</span> <span class="mh">0x24</span><span class="p">,</span> <span class="mh">0x04</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">,</span> 	   <span class="c1">// mov dword ptr ss : [rsp + 4] , 0x00
+</span></span></span><span class="line"><span class="ln">50</span><span class="cl"><span class="c1"></span>	<span class="mh">0xC3</span>													   <span class="c1">// ret
+</span></span></span><span class="line"><span class="ln">51</span><span class="cl"><span class="c1"></span>	<span class="p">};</span>
+</span></span><span class="line"><span class="ln">52</span><span class="cl">	<span class="kt">char</span> <span class="n">absolutejmpCode</span><span class="p">[</span><span class="mi">14</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span> <span class="mh">0xFF</span><span class="p">,</span><span class="mh">0x25</span><span class="p">,</span><span class="mh">0x00</span><span class="p">,</span><span class="mh">0x00</span><span class="p">,</span><span class="mh">0x00</span><span class="p">,</span><span class="mh">0x00</span><span class="p">,</span><span class="mh">0x00</span><span class="p">,</span><span class="mh">0x00</span><span class="p">,</span><span class="mh">0x00</span><span class="p">,</span><span class="mh">0x00</span><span class="p">,</span><span class="mh">0x00</span><span class="p">,</span><span class="mh">0x00</span><span class="p">,</span><span class="mh">0x00</span><span class="p">,</span><span class="mh">0x00</span> <span class="p">};</span>
+</span></span><span class="line"><span class="ln">53</span><span class="cl">	<span class="o">*</span><span class="p">((</span><span class="n">PUINT32</span><span class="p">)</span><span class="o">&amp;</span><span class="n">trampLineCode</span><span class="p">[</span><span class="mi">6</span><span class="p">])</span> <span class="o">=</span> <span class="p">(</span><span class="n">UINT32</span><span class="p">)(((</span><span class="kt">uint64_t</span><span class="p">)</span><span class="n">JmpAddrStart</span> <span class="o">+</span> <span class="n">uBreakBytes</span><span class="p">)</span> <span class="o">&amp;</span> <span class="mh">0XFFFFFFFF</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">54</span><span class="cl">	<span class="o">*</span><span class="p">((</span><span class="n">PUINT32</span><span class="p">)</span><span class="o">&amp;</span><span class="n">trampLineCode</span><span class="p">[</span><span class="mi">15</span><span class="p">])</span> <span class="o">=</span> <span class="p">(</span><span class="n">UINT32</span><span class="p">)((((</span><span class="kt">uint64_t</span><span class="p">)</span><span class="n">JmpAddrStart</span> <span class="o">+</span> <span class="n">uBreakBytes</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="mi">32</span><span class="p">)</span> <span class="o">&amp;</span> <span class="mh">0XFFFFFFFF</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">55</span><span class="cl">
+</span></span><span class="line"><span class="ln">56</span><span class="cl">	<span class="n">memcpy</span><span class="p">(</span><span class="n">TrampLine</span><span class="p">,</span> <span class="n">JmpAddrStart</span><span class="p">,</span> <span class="n">uBreakBytes</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">57</span><span class="cl">	<span class="n">memcpy</span><span class="p">(</span><span class="n">TrampLine</span> <span class="o">+</span> <span class="n">uBreakBytes</span><span class="p">,</span> <span class="n">trampLineCode</span><span class="p">,</span> <span class="n">trampLineBreakBytes</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">58</span><span class="cl">	<span class="c1">//添加Hook信息
+</span></span></span><span class="line"><span class="ln">59</span><span class="cl"><span class="c1"></span>	<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">MAX_HOOK_COUNT</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">60</span><span class="cl">		<span class="k">if</span> <span class="p">(</span><span class="n">m_info</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">pid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">61</span><span class="cl">			<span class="n">m_info</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">oriAddr</span> <span class="o">=</span> <span class="n">JmpAddrStart</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">62</span><span class="cl">			<span class="n">memcpy</span><span class="p">(</span><span class="n">m_info</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">oriBytes</span><span class="p">,</span> <span class="n">JmpAddrStart</span><span class="p">,</span> <span class="mi">14</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">63</span><span class="cl">			<span class="n">m_info</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">pid</span> <span class="o">=</span> <span class="n">pid</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">64</span><span class="cl">			<span class="n">m_curHookCount</span><span class="o">++</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">65</span><span class="cl">			<span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">66</span><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="ln">67</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">68</span><span class="cl">	<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;ready to create trampline.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">69</span><span class="cl">	<span class="o">*</span><span class="p">((</span><span class="n">ULONG64</span><span class="o">*</span><span class="p">)(</span><span class="o">&amp;</span><span class="n">absolutejmpCode</span><span class="p">[</span><span class="mi">6</span><span class="p">]))</span> <span class="o">=</span> <span class="p">(</span><span class="n">ULONG64</span><span class="p">)</span><span class="n">targetFuncAddr</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">70</span><span class="cl">	<span class="n">KeStackAttachProcess</span><span class="p">(</span><span class="n">Process</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">Apc</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">71</span><span class="cl">	<span class="c1">//auto oIrpl = WPOFF();
+</span></span></span><span class="line"><span class="ln">72</span><span class="cl"><span class="c1"></span>	<span class="c1">//memcpy(JmpAddrStart, absolutejmpCode, 14);
+</span></span></span><span class="line"><span class="ln">73</span><span class="cl"><span class="c1"></span>	<span class="c1">//DbgPrintEx(77, 0, &#34;[JmpAddrStart]%p\r\n&#34;,JmpAddrStart);
+</span></span></span><span class="line"><span class="ln">74</span><span class="cl"><span class="c1"></span>	<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;[absolutejmpCode]&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">75</span><span class="cl">	<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">14</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">76</span><span class="cl">		<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;%02X&#34;</span><span class="p">,</span> <span class="p">(</span><span class="kt">unsigned</span> <span class="kt">char</span><span class="p">)</span><span class="n">absolutejmpCode</span><span class="p">[</span><span class="n">i</span><span class="p">]);</span>
+</span></span><span class="line"><span class="ln">77</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">78</span><span class="cl">	<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">79</span><span class="cl">	<span class="n">BOOLEAN</span> <span class="n">success</span> <span class="o">=</span> <span class="n">MDLWriteMemory</span><span class="p">(</span><span class="n">JmpAddrStart</span><span class="p">,</span> <span class="n">absolutejmpCode</span><span class="p">,</span> <span class="mi">14</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">80</span><span class="cl">	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">success</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">81</span><span class="cl">		<span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;failed to MDL write jmpcode.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">82</span><span class="cl">		<span class="k">return</span> <span class="nb">false</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">83</span><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="ln">84</span><span class="cl">	<span class="n">KeUnstackDetachProcess</span><span class="p">(</span><span class="o">&amp;</span><span class="n">Apc</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">85</span><span class="cl">	<span class="o">*</span><span class="n">oFuncAddr</span> <span class="o">=</span> <span class="n">TrampLine</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">86</span><span class="cl">	<span class="n">m_trampLineUsed</span> <span class="o">+=</span> <span class="n">uBreakBytes</span> <span class="o">+</span> <span class="n">trampLineBreakBytes</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">87</span><span class="cl">	<span class="n">ObDereferenceObject</span><span class="p">(</span><span class="n">Process</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">88</span><span class="cl">	<span class="k">return</span> <span class="nb">true</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">89</span><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>下面我尝试Hook explore.exe进程的NtCreateFile函数看看效果，系统版本：Win10 1903，另外我还测试了Win10 21H2、Win11 21H2，挂了6小时左右未出现PG</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c++" data-lang="c++"><span class="line"><span class="ln"> 1</span><span class="cl"><span class="n">NTSTATUS</span> <span class="nf">HookNtCreateFile</span><span class="p">(</span>
+</span></span><span class="line"><span class="ln"> 2</span><span class="cl">    <span class="n">OUT</span> <span class="n">PHANDLE</span> <span class="n">FileHandle</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 3</span><span class="cl">    <span class="n">IN</span> <span class="n">ACCESS_MASK</span> <span class="n">DesiredAccess</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 4</span><span class="cl">    <span class="n">IN</span> <span class="n">POBJECT_ATTRIBUTES</span> <span class="n">ObjectAttributes</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 5</span><span class="cl">    <span class="n">OUT</span> <span class="n">PIO_STATUS_BLOCK</span> <span class="n">IoStatusBlock</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 6</span><span class="cl">    <span class="n">IN</span> <span class="n">PLARGE_INTEGER</span> <span class="n">AllocationSize</span> <span class="n">OPTIONAL</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 7</span><span class="cl">    <span class="n">IN</span> <span class="n">ULONG</span> <span class="n">FileAttributes</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 8</span><span class="cl">    <span class="n">IN</span> <span class="n">ULONG</span> <span class="n">ShareAccess</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln"> 9</span><span class="cl">    <span class="n">IN</span> <span class="n">ULONG</span> <span class="n">CreateDisposition</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln">10</span><span class="cl">    <span class="n">IN</span> <span class="n">ULONG</span> <span class="n">CreateOptions</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln">11</span><span class="cl">    <span class="n">IN</span> <span class="n">PVOID</span> <span class="n">EaBuffer</span> <span class="n">OPTIONAL</span><span class="p">,</span>
+</span></span><span class="line"><span class="ln">12</span><span class="cl">    <span class="n">IN</span> <span class="n">ULONG</span> <span class="n">EaLength</span><span class="p">)</span>
+</span></span><span class="line"><span class="ln">13</span><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="ln">14</span><span class="cl">    <span class="n">DbgPrintEx</span><span class="p">(</span><span class="mi">77</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#34;[+]Create Files.</span><span class="se">\r\n</span><span class="s">&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">15</span><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">ObjectAttributes</span> <span class="o">&amp;&amp;</span> <span class="n">ObjectAttributes</span><span class="o">-&gt;</span><span class="n">ObjectName</span> <span class="o">&amp;&amp;</span> <span class="n">ObjectAttributes</span><span class="o">-&gt;</span><span class="n">ObjectName</span><span class="o">-&gt;</span><span class="n">Buffer</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">16</span><span class="cl">        <span class="kt">wchar_t</span><span class="o">*</span> <span class="n">name</span> <span class="o">=</span> <span class="p">(</span><span class="kt">wchar_t</span><span class="o">*</span><span class="p">)</span><span class="n">ExAllocatePoolWithTag</span><span class="p">(</span><span class="n">NonPagedPool</span><span class="p">,</span> <span class="n">ObjectAttributes</span><span class="o">-&gt;</span><span class="n">ObjectName</span><span class="o">-&gt;</span><span class="n">Length</span> <span class="o">+</span> <span class="k">sizeof</span><span class="p">(</span><span class="kt">wchar_t</span><span class="p">),</span> <span class="err">&#39;</span><span class="n">name</span><span class="err">&#39;</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">17</span><span class="cl">        <span class="n">RtlZeroMemory</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">ObjectAttributes</span><span class="o">-&gt;</span><span class="n">ObjectName</span><span class="o">-&gt;</span><span class="n">Length</span> <span class="o">+</span> <span class="k">sizeof</span><span class="p">(</span><span class="kt">wchar_t</span><span class="p">));</span>
+</span></span><span class="line"><span class="ln">18</span><span class="cl">        <span class="n">RtlCopyMemory</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">ObjectAttributes</span><span class="o">-&gt;</span><span class="n">ObjectName</span><span class="o">-&gt;</span><span class="n">Buffer</span><span class="p">,</span> <span class="n">ObjectAttributes</span><span class="o">-&gt;</span><span class="n">ObjectName</span><span class="o">-&gt;</span><span class="n">Length</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">19</span><span class="cl">        <span class="k">if</span> <span class="p">(</span><span class="n">wcsstr</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="sa">L</span><span class="s">&#34;MyHook.txt&#34;</span><span class="p">))</span> <span class="p">{</span>
+</span></span><span class="line"><span class="ln">20</span><span class="cl">            <span class="n">ExFreePool</span><span class="p">(</span><span class="n">name</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">21</span><span class="cl">            <span class="k">return</span> <span class="n">STATUS_ACCESS_DENIED</span><span class="p">;</span>
+</span></span><span class="line"><span class="ln">22</span><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="ln">23</span><span class="cl">        <span class="n">ExFreePool</span><span class="p">(</span><span class="n">name</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">24</span><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="ln">25</span><span class="cl">
+</span></span><span class="line"><span class="ln">26</span><span class="cl">    <span class="k">return</span> <span class="n">g_OriginNtCreateFile</span><span class="p">(</span><span class="n">FileHandle</span><span class="p">,</span> <span class="n">DesiredAccess</span><span class="p">,</span> <span class="n">ObjectAttributes</span><span class="p">,</span> <span class="n">IoStatusBlock</span><span class="p">,</span> <span class="n">AllocationSize</span><span class="p">,</span> <span class="n">FileAttributes</span><span class="p">,</span> <span class="n">ShareAccess</span><span class="p">,</span> <span class="n">CreateDisposition</span><span class="p">,</span> <span class="n">CreateOptions</span><span class="p">,</span> <span class="n">EaBuffer</span><span class="p">,</span> <span class="n">EaLength</span><span class="p">);</span>
+</span></span><span class="line"><span class="ln">27</span><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>效果图：</p>
+<p><img alt="image-20250309133836175" loading="lazy" src="https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/image-20250309133836175.png"></p>
+<h3 id="结语">结语<a hidden class="anchor" aria-hidden="true" href="#结语">#</a></h3>
+<p>PTE Hook其实已经是一种比较古老的方法了，不过研究完之后，我觉得对于x64架构的认识以及Windows内核的入门还挺有帮助的。</p>
+
+
+  </div>
+
+  <footer class="post-footer">
+    <ul class="post-tags">
+      <li><a href="https://ybliangcha.github.io/tags/kernel/">Kernel</a></li>
+      <li><a href="https://ybliangcha.github.io/tags/game-security/">Game Security</a></li>
+    </ul>
+<nav class="paginav">
+  <a class="prev" href="https://ybliangcha.github.io/posts/etw-hook-based-system-sandbox/">
+    <span class="title">« 上一页</span>
+    <br>
+    <span>基于ETW Hook的自动化恶意代码分析沙箱设计</span>
+  </a>
+</nav>
+
+  </footer>
+</article>
+    </main>
+    
+<footer class="footer">
+        <span><a href="https://ybliangcha.github.io/">©2025 Loft&rsquo;s Blog</a></span> · 
+
+    <span>
+        Powered by
+        <a href="https://gohugo.io/" rel="noopener noreferrer" target="_blank">Hugo</a> &
+        <a href="https://github.com/adityatelange/hugo-PaperMod/" rel="noopener" target="_blank">PaperMod</a>
+    </span>
+</footer>
+<a href="#top" aria-label="go to top" title="Go to Top (Alt + G)" class="top-link" id="top-link" accesskey="g">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 6" fill="currentColor">
+        <path d="M12 6H0l6-6z" />
+    </svg>
+</a>
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/medium-zoom/1.1.0/medium-zoom.min.js"
+  integrity="sha512-9ZKhgaFdKlsELap/dGw3Iaz5Bj+Las0XXZiRKYZaN9QArg6FtkD5rULNmNH4rTCTFxjPiBGr3MX8smRADRorDA=="
+  crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+<script>
+  var OSName = "unknown";
+  var navApp = navigator.userAgent.toLowerCase();
+  switch (true) {
+    case (navApp.indexOf("win") != -1):
+      OSName = "windows";
+      break;
+    case (navApp.indexOf("mac") != -1):
+      OSName = "apple";
+      break;
+    case (navApp.indexOf("linux") != -1):
+      OSName = "linux";
+      break;
+    case (navApp.indexOf("x11") != -1):
+      OSName = "unix";
+      break;
+  }
+
+  const images = Array.from(document.querySelectorAll(".post-content img"));
+  images.forEach(img => {
+    mediumZoom(img, {
+      margin: 1,    
+      
+      container: null,  
+      template: null,  
+      
+    });
+  });
+
+  if (OSName == "windows") {
+    document.body.className += ' win11'
+  }
+</script>
+
+
+<script>
+    let menu = document.getElementById('menu')
+    if (menu) {
+        menu.scrollLeft = localStorage.getItem("menu-scroll-position");
+        menu.onscroll = function () {
+            localStorage.setItem("menu-scroll-position", menu.scrollLeft);
+        }
+    }
+
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener("click", function (e) {
+            e.preventDefault();
+            var id = this.getAttribute("href").substr(1);
+            if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                document.querySelector(`[id='${decodeURIComponent(id)}']`).scrollIntoView({
+                    behavior: "smooth"
+                });
+            } else {
+                document.querySelector(`[id='${decodeURIComponent(id)}']`).scrollIntoView();
+            }
+            if (id === "top") {
+                history.replaceState(null, null, " ");
+            } else {
+                history.pushState(null, null, `#${id}`);
+            }
+        });
+    });
+
+</script>
+<script>
+    var mybutton = document.getElementById("top-link");
+    window.onscroll = function () {
+        if (document.body.scrollTop > 800 || document.documentElement.scrollTop > 800) {
+            mybutton.style.visibility = "visible";
+            mybutton.style.opacity = "1";
+        } else {
+            mybutton.style.visibility = "hidden";
+            mybutton.style.opacity = "0";
+        }
+    };
+
+</script>
+<script>
+    document.getElementById("theme-toggle").addEventListener("click", () => {
+        if (document.body.className.includes("dark")) {
+            document.body.classList.remove('dark');
+            localStorage.setItem("pref-theme", 'light');
+        } else {
+            document.body.classList.add('dark');
+            localStorage.setItem("pref-theme", 'dark');
+        }
+    })
+
+</script>
+<script>
+    document.querySelectorAll('pre > code').forEach((codeblock) => {
+        const container = codeblock.parentNode.parentNode;
+
+        const copybutton = document.createElement('button');
+        copybutton.classList.add('copy-code');
+        copybutton.innerHTML = '复制';
+
+        function copyingDone() {
+            copybutton.innerHTML = '已复制！';
+            setTimeout(() => {
+                copybutton.innerHTML = '复制';
+            }, 2000);
+        }
+
+        copybutton.addEventListener('click', (cb) => {
+            if ('clipboard' in navigator) {
+                navigator.clipboard.writeText(codeblock.textContent);
+                copyingDone();
+                return;
+            }
+
+            const range = document.createRange();
+            range.selectNodeContents(codeblock);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            try {
+                document.execCommand('copy');
+                copyingDone();
+            } catch (e) { };
+            selection.removeRange(range);
+        });
+
+        if (container.classList.contains("highlight")) {
+            container.appendChild(copybutton);
+        } else if (container.parentNode.firstChild == container) {
+            
+        } else if (codeblock.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName == "TABLE") {
+            
+            codeblock.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(copybutton);
+        } else {
+            
+            codeblock.parentNode.appendChild(copybutton);
+        }
+    });
+</script>
+</body>
+
+</html>
