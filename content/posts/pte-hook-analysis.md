@@ -1,9 +1,9 @@
 +++
 title = 'PTE Hook原理浅析'
-date = 2025-08-16T01:12:53+08:00
+date = 2025-01-16T01:12:53+08:00
 categories = []
 tags = ["kernel","game security"]
-
++++
 ## 什么是PTE Hook
 
 常规的inlineHook思路是直接修改目标函数的代码，使其先执行我们自己的函数，再跳转回来执行原函数。这种Hook是全局的，即Windows中每一个进程一旦调用被Hook的函数，就会受到我们的影响，也很容易被PatchGuard检查到。
