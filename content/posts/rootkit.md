@@ -656,6 +656,6 @@ main()
 
 [2] [Kernel-Adventures/DataPtrHijack at main · eversinc33/Kernel-Adventures](https://github.com/eversinc33/Kernel-Adventures/tree/main/DataPtrHijack)
 
-[3] [[原创\]简述常规的 " 驱动 .data 通信 " 如何利用/查找-软件逆向-看雪论坛-安全社区|非营利性质技术交流社区](https://bbs.kanxue.com/thread-285348.htm)
+[3] [简述常规的 " 驱动 .data 通信 " 如何利用/查找-软件逆向-看雪论坛-安全社区|非营利性质技术交流社区](https://bbs.kanxue.com/thread-285348.htm)
 
-[4] [[原创\]使用NMI中断检测无模块驱动-编程技术-看雪论坛-安全社区|非营利性质技术交流社区](https://bbs.kanxue.com/thread-288576.htm)
+[4] [使用NMI中断检测无模块驱动-编程技术-看雪论坛-安全社区|非营利性质技术交流社区](https://bbs.kanxue.com/thread-288576.htm)
