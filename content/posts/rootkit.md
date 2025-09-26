@@ -1,9 +1,10 @@
----
-title: "如何优雅的检测内核Rootkit"
-date: 2025-09-26T10:04:23+08:00
-categories: []
-tags: ["kernel","rootkit"]
----
++++
+title = '如何优雅的检测内核Rootkit'
+date = 2025-09-26T01:12:53+08:00
+categories = []
+tags = ["kernel","rootkit"]
+
++++
 
 ## 前言
 
@@ -416,7 +417,7 @@ IsInstructionPointerInInvalidRegion(_In_ UINT64          RIP,
 
 `.data ptr`劫持是在游戏外挂圈被提出的一个概念，它利用Patch Guard对`.data`段中的函数指针监控不严格这一特性，替换某些在**3环能够直接调用，调用完毕后发送至内核的特殊函数**，这类函数通常存在于`win32k.sys`，`win32kbase.sys`等
 
-Windows的图形子系统原本是纯3环实现的，在后来的更新中被搬进了0环，由于微软工程师考虑不周暴露出了很多的安全漏洞，之前奇安信披露的[StepBear]([奇安信威胁情报中心](https://ti.qianxin.com/blog/articles/The-Nightmare-of-EDR-Storm-0978-Utilizing-New-Kernel-Injection-Technique-Step-Bear-CN/))技术就是在这个驱动中的。
+Windows的图形子系统原本是纯3环实现的，在后来的更新中被搬进了0环，由于微软工程师考虑不周暴露出了很多的安全漏洞，之前奇安信披露的[StepBear](https://ti.qianxin.com/blog/articles/The-Nightmare-of-EDR-Storm-0978-Utilizing-New-Kernel-Injection-Technique-Step-Bear-CN/)技术就是在这个驱动中的。
 
 
 
