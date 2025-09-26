@@ -338,7 +338,7 @@ LaunchNonMaskableInterrupt(_In_ PNMI_CONTEXT NmiContext)
 
 注意一个内核编程的细节，在高IRQL下执行代码要尽可能简单、短暂，否则操作系统有什么其他错误没法及时处理就会蓝屏。所以我们需要把堆栈检测分为**采集堆栈+堆栈分析**两个步骤，其中 采集堆栈在`NmiCallback`中完成。
 
-回调函数主要参考[周旋久]([[原创\]使用NMI中断检测无模块驱动-编程技术-看雪论坛-安全社区|非营利性质技术交流社区](https://bbs.kanxue.com/thread-288576.htm))师傅的方法，只有他这么做才不会蓝屏，直接在回调函数中调用`RtlWalkFrameChain`采集堆栈是会蓝屏的。
+回调函数主要参考[周旋久](https://bbs.kanxue.com/thread-288576.htm)师傅的方法，只有他这么做才不会蓝屏，直接在回调函数中调用`RtlWalkFrameChain`采集堆栈是会蓝屏的。
 
 其代码如下：
 
