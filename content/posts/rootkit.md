@@ -1,9 +1,9 @@
-+++
-title = "如何优雅的检测内核Rootkit"
-date = 2025-09-26T10:04:23+08:00
-categories = []
-tags = ["kernel","rootkit"]
-+++
+---
+title: "如何优雅的检测内核Rootkit"
+date: 2025-09-26T10:04:23+08:00
+categories: []
+tags: ["kernel","rootkit"]
+---
 
 ## 前言
 
