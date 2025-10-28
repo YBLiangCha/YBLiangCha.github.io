@@ -221,12 +221,7 @@ class BlogPublisherPro:
         tags_container.grid(row=2, column=1, sticky='ew', pady=5, padx=5)
 
         self.tags_entry = ttk.Entry(tags_container, width=60)
-        self.tags_entry.pack(fill='x', pady=(0, 5))
-
-        # Tags推荐区域
-        self.tags_rec_frame = ttk.Frame(tags_container)
-        self.tags_rec_frame.pack(fill='x')
-        ttk.Label(self.tags_rec_frame, text="推荐:", font=('Arial', 8)).pack(side='left')
+        self.tags_entry.pack(fill='x')
 
         # Commit message
         ttk.Label(form_frame, text="提交说明:", font=('Arial', 10, 'bold')).grid(
@@ -255,6 +250,7 @@ class BlogPublisherPro:
                   bootstyle='info').pack(side='left', padx=5)
         ttk.Button(button_frame, text="发布", command=self.publish_post,
                   bootstyle='success').pack(side='left', padx=5)
+
 
     def create_right_panel(self, parent):
         """创建右侧历史和日志面板"""
@@ -314,6 +310,34 @@ class BlogPublisherPro:
         ttk.Button(log_btn_frame, text="清空日志", command=self.log_text.clear_log,
                   bootstyle='secondary-outline').pack(side='left', padx=2)
 
+        # 标签库页面
+        tags_lib_frame = ttk.Frame(notebook)
+        notebook.add(tags_lib_frame, text='标签库')
+
+        # 标签库内容
+        tags_lib_container = ttk.Frame(tags_lib_frame, padding=10)
+        tags_lib_container.pack(fill='both', expand=True)
+
+        # 标题和说明
+        header_frame = ttk.Frame(tags_lib_container)
+        header_frame.pack(fill='x', pady=(0, 10))
+
+        ttk.Label(header_frame, text="常用标签", font=('Arial', 12, 'bold')).pack(side='left')
+        ttk.Label(header_frame, text="点击标签添加到输入框", font=('Arial', 9),
+                 foreground='gray').pack(side='left', padx=10)
+
+        # 创建可滚动的标签区域
+        tags_scroll_frame = ScrolledText(tags_lib_container, autohide=True)
+        tags_scroll_frame.pack(fill='both', expand=True)
+        tags_scroll_frame.text.configure(state='disabled')
+
+        # 保存引用以便后续更新
+        self.tags_lib_container = tags_scroll_frame.text
+
+        # 创建一个Frame来放置标签按钮（放在Text widget内部）
+        self.tags_buttons_frame = ttk.Frame(tags_scroll_frame.text)
+        tags_scroll_frame.text.window_create('1.0', window=self.tags_buttons_frame)
+
         # 初始化时加载历史记录
         self.refresh_history()
 
@@ -322,18 +346,43 @@ class BlogPublisherPro:
 
     def update_tags_recommendations(self):
         """更新tags推荐按钮"""
-        # 清除旧的推荐按钮
-        for widget in self.tags_rec_frame.winfo_children():
-            if isinstance(widget, ttk.Button):
-                widget.destroy()
+        # 清除旧的按钮
+        for widget in self.tags_buttons_frame.winfo_children():
+            widget.destroy()
 
-        # 添加新的推荐按钮
-        recommended = self.tags_manager.get_recommended_tags(8)
-        for tag in recommended:
-            btn = ttk.Button(self.tags_rec_frame, text=tag,
+        # 获取所有标签及其使用次数
+        tags_stats = self.tags_manager.tags_stats
+        if not tags_stats:
+            # 如果没有标签，显示提示
+            ttk.Label(self.tags_buttons_frame, text="暂无常用标签，发布文章后会自动记录",
+                     font=('Arial', 10), foreground='gray').pack(pady=20)
+            return
+
+        # 按使用频率排序
+        sorted_tags = sorted(tags_stats.items(), key=lambda x: x[1], reverse=True)
+
+        # 使用网格布局显示标签按钮（每行5个）
+        row = 0
+        col = 0
+        max_cols = 5
+
+        for tag, count in sorted_tags:
+            # 创建按钮，显示标签名和使用次数
+            btn_text = f"{tag} ({count})"
+            btn = ttk.Button(self.tags_buttons_frame, text=btn_text,
                            command=lambda t=tag: self.add_tag(t),
-                           bootstyle='info-outline', width=10)
-            btn.pack(side='left', padx=2, pady=2)
+                           bootstyle='info', width=20)
+            btn.grid(row=row, column=col, padx=5, pady=5, sticky='ew')
+
+            col += 1
+            if col >= max_cols:
+                col = 0
+                row += 1
+
+        # 配置列权重，使按钮能够自适应宽度
+        for i in range(max_cols):
+            self.tags_buttons_frame.columnconfigure(i, weight=1)
+
 
     def add_tag(self, tag):
         """添加tag到输入框"""
@@ -460,7 +509,7 @@ tags = [{tags_formatted}]
         """清理文件名"""
         illegal_chars = r'[<>:"/\\|?*]'
         filename = re.sub(illegal_chars, '', title)
-        filename = filename.replace(' ', '_')
+        filename = filename.replace(' ', '-')
         return filename
 
     def publish_post(self):

@@ -1,8 +1,8 @@
 +++
 title = 'Cow Inject'
-date = 2025-10-28T17:10:27+08:00
+date = 2025-10-28T17:29:02+08:00
 categories = []
-tags = ["kernel", "game", "security", "inject"]
+tags = ["game security", "kernel", "inject"]
 +++
 
 前置条件：关闭KVAS
