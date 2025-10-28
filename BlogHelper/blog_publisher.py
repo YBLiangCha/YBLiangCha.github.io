@@ -243,18 +243,28 @@ tags = [{tags_formatted}]
                 cmd_str = ' '.join(cmd)
                 output_messages.append(f"执行: {cmd_str}")
 
+                # 处理标准输出
                 if result.stdout:
-                    output_messages.append(f"输出: {result.stdout}")
-                if result.stderr:
-                    output_messages.append(f"错误: {result.stderr}")
+                    output_messages.append(f"{result.stdout.strip()}")
 
+                # 处理标准错误（Git常将正常信息也输出到stderr）
+                if result.stderr:
+                    stderr_text = result.stderr.strip()
+                    # 只有真正的错误才标记为错误（returncode != 0）
+                    if result.returncode != 0:
+                        output_messages.append(f"错误: {stderr_text}")
+                    else:
+                        # returncode = 0 时，stderr 中的内容是正常信息或警告
+                        output_messages.append(f"{stderr_text}")
+
+                # 检查命令是否执行失败
                 if result.returncode != 0:
                     # 如果是commit命令且没有更改，不算错误
-                    if "git commit" in cmd_str and "nothing to commit" in result.stdout:
-                        output_messages.append("没有需要提交的更改")
+                    if "git commit" in cmd_str and ("nothing to commit" in result.stdout or "nothing to commit" in result.stderr):
+                        output_messages.append("提示: 没有需要提交的更改")
                         continue
                     else:
-                        raise Exception(f"命令执行失败: {cmd_str}\n{result.stderr}")
+                        raise Exception(f"命令执行失败: {cmd_str}\n返回码: {result.returncode}\n{result.stderr}")
 
             # 显示所有输出
             messagebox.showinfo("Git提交成功", "\n".join(output_messages))
