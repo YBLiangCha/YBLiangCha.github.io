@@ -1,2 +1,5 @@
 ttkbootstrap>=1.10.1
 markdown>=3.4.0
+
+# 可选：打包为exe时需要
+pyinstaller>=5.0.0

@@ -16,6 +16,15 @@ from pathlib import Path
 import markdown
 from html.parser import HTMLParser
 
+def get_app_dir():
+    """获取应用程序所在目录（支持打包后的exe）"""
+    if getattr(sys, 'frozen', False):
+        # 如果是打包后的exe
+        return Path(sys.executable).parent
+    else:
+        # 如果是脚本运行
+        return Path(__file__).parent
+
 class HTMLToTextParser(HTMLParser):
     """将HTML转换为纯文本以便在Text widget中显示"""
     def __init__(self):
@@ -35,7 +44,7 @@ class HTMLToTextParser(HTMLParser):
 class HistoryManager:
     """历史记录管理器"""
     def __init__(self, history_file="blog_history.json"):
-        self.history_file = Path(__file__).parent / history_file
+        self.history_file = get_app_dir() / history_file
         self.history = self.load_history()
 
     def load_history(self):
@@ -84,7 +93,7 @@ class HistoryManager:
 class TagsManager:
     """Tags智能推荐管理器"""
     def __init__(self, tags_file="tags_stats.json"):
-        self.tags_file = Path(__file__).parent / tags_file
+        self.tags_file = get_app_dir() / tags_file
         self.tags_stats = self.load_tags()
 
     def load_tags(self):
