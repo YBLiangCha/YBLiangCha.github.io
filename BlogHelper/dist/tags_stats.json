@@ -2,5 +2,6 @@
   "game security": 4,
   "kernel": 4,
   "inject": 3,
-  "vt-d": 1
+  "vt-d": 1,
+  "diary": 1
 }
