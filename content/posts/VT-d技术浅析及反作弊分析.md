@@ -29,7 +29,7 @@ tags = ["game security", "kernel", "vt-d"]
 
 ### VT-d 开启
 
-这一部分被vm不方便分析，根据后面的VT-d卸载以及[该开源项目]([tandasat/HelloIommuPkg: The sample DXE runtime driver demonstrating how to program DMA remapping.](https://github.com/tandasat/HelloIommuPkg/tree/master))推断出大致的逻辑。完美大概率也参考了此项目
+这一部分被vm不方便分析，根据后面的VT-d卸载以及[该开源项目]([tandasat/HelloIommuPkg: The sample DXE runtime driver demonstrating how to program DMA remapping.](https://github.com/tandasat/HelloIommuPkg/tree/master))推断出大致的逻辑。XX大概率也参考了此项目
 
 这一步包括：
 
@@ -92,7 +92,7 @@ BuildPassthroughTranslations (
 	// 寻址流程：GPA --> Root Table --> Context Table --> SLPML4 --> ...
 	//
 	// 由于这里所有的context entries都指向了同样的地址，所以可以简单的domain id置1 
-	// 完美的生产级实现可能更复杂，但核心原理只需要保证每个domain都不映射游戏地址
+	// XX的生产级实现可能更复杂，但核心原理只需要保证每个domain都不映射游戏地址
 	// 即可实现对游戏的保护
 	//
 	
@@ -251,7 +251,7 @@ ApplyTranslationChangesToVtd (
 
 > DisableOrCheckVtd
 
-完美将统计VT-d状态的checker和关闭VT-d的禁用器写在了一个函数
+XX将统计VT-d状态的checker和关闭VT-d的禁用器写在了一个函数
 
 当`operationMode == 2`时，清除pass through条目
 ![image-20251115192702198](https://liangcha666.oss-cn-beijing.aliyuncs.com/ReverseBlog/image-20251115192702198.png)
