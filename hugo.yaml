@@ -2,7 +2,7 @@
 # hugo 本身的配置
 # ~~~~~~~~~
 baseURL: "https://ybliangcha.github.io/" # 主站的 URL
-title: 洛芙特安全博客 # 站点标题
+title: 洛夫特 # 站点标题
 copyright: "[©2025 Loft's Blog](https://www.loftsec.icu/)" # 网站的版权声明，通常显示在页脚
 theme: PaperMod # 主题
 languageCode: zh-cn # 语言
